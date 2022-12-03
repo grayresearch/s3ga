@@ -6,16 +6,16 @@
 // S3GA: simple scalable serial FPGA
 
 module s3ga #(
-    parameter N         = 2048,         // N logical LUTs
+    parameter N         = 128,         // N logical LUTs
     parameter M         = 8,            // M contexts
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
     parameter LB_IB     = 3,            // no. of LB input buffers
-    parameter CFG_W     = 4,            // config I/O width
-    parameter IO_I_W    = 32,           // parallel IO input  width
-    parameter IO_O_W    = 32,           // parallel IO output width
-    parameter UP_I_WS   = 06_12_24_00,  // up switch serial input  widths
-    parameter UP_O_WS   = 04_08_16_00,  // up switch serial output widths
+    parameter CFG_W     = 1,            // config I/O width
+    parameter IO_I_W    = 8,            // parallel IO input  width
+    parameter IO_O_W    = 8,            // parallel IO output width
+    parameter UP_I_WS   = 06_06_00,     // up switch serial input  widths
+    parameter UP_O_WS   = 04_04_00,     // up switch serial output widths
 
     localparam UP_I_W   = UP_I_WS%100,  // up switch serial input  width
     localparam UP_O_W   = UP_O_WS%100,  // up switch serial output width
@@ -34,10 +34,9 @@ module s3ga #(
     wire `V(CFG_W)      cfgs[0:B];      // local config chain outputs
     assign cfgs[0] = cfg_i;
 
-
     genvar i, j;
     generate
-    if (N == B*M) begin
+    if (N == B*M) begin : leaf
         // s3ga<32> => { lb<8> lb<8> lb<8> lb<8> } directly, sans switch<32>
         for (i = 0; i < B; i=i+1) begin : lbs
             wire `V(B-1) peers;
@@ -51,12 +50,12 @@ module s3ga #(
         // TODO: IO
         assign io_o = up_o;
     end
-    else begin
+    else begin : hier
         // recurse to B subclusters sized N/B
         wire `NV(B,DN_I_W)  dn_is;      // down switches' serial inputs
         wire `NV(B,DN_O_W)  dn_os;      // down switches' serial outputs
 
-        switch #(.M(M), .B(B), .UP_I_W(UP_I_W), .UP_O_W(UP_O_W), .DN_I_W(DN_I_W),.DN_O_W(DN_O_W))
+        switch #(.M(M), .B(B), .UP_I_W(UP_I_W), .UP_O_W(UP_O_W), .DN_I_W(DN_I_W), .DN_O_W(DN_O_W), .CFG_W(CFG_W))
             sw(.clk, .rst, .cfg_i(cfgs[B]), .cfg_o(cfg_o), .up_i, .up_o, .dn_is, .dn_os);
 
         for (i = 0; i < B; i=i+1) begin : cs
@@ -114,13 +113,13 @@ module switch #(
             for (j = 0; j < B-1; j=j+1)
                 assign is[i][UP_I_W + j*DN_I_W +: DN_I_W] = dn_is`at(j+(j>=i),DN_I_W);
 
-            xbar #(.M(M), .I_W(DN_X_W), .O_W(DN_O_W))
+            xbar #(.M(M), .B(B), .I_W(DN_X_W), .O_W(DN_O_W), .CFG_W(CFG_W))
                 x(.clk, .rst, .cfg_i(cfgs[i]), .cfg_o(cfgs[i+1]), .i(is[i]), .o(dn_os`at(i,DN_O_W)));
         end
 
         // optional up outputs' crossbar
         if (UP_O_W > 0) begin : up
-            xbar #(.M(M), .I_W(B*DN_I_W), .O_W(UP_O_W))
+            xbar #(.M(M), .B(B), .I_W(B*DN_I_W), .O_W(UP_O_W), .CFG_W(CFG_W))
                 x(.clk, .rst, .cfg_i(cfgs[B]), .cfg_o, .i(dn_is), .o(up_o));
         end
         else begin
@@ -181,7 +180,6 @@ module lb #(
     // LB IMUXs
     localparam LB_IN_W  = G+B-2;
     localparam LB_SEL_W = $clog2(LB_IN_W);
-    `comb`NV(I,LB_IN_W) lb_inss;
     `comb`V(LB_IN_W)    lb_ins;
     `comb`V(I)          imuxs;
 
@@ -212,19 +210,21 @@ module lb #(
     always @* begin
         for (i = 0; i < I; i=i+1) begin
             // ith LB input is one of G globals or B-2 of the B-1 peer LB outputs
-            lb_inss`at(i,LB_IN_W) = globals << (B-2);
+            lb_ins = globals << (B-2);
             for (j = 0; j < B-2; j=j+1)
-                lb_inss[i*LB_IN_W + j] = peers[j + (j>=i)];
-            lb_ins = lb_inss`at(i,LB_IN_W);
+                lb_ins[j] = peers[j + (j>=i)];
             imuxs[i] = lb_ins[lb_in_sels`at(i,LB_SEL_W)];
         end
     end
+
     // LB input buffers and output buffer
     always @(posedge clk) begin
         for (i = 0; i < I; i=i+1)
             ibufs[i] <= {ibufs[i],imuxs[i]};
         obuf <= {obuf,lut};
     end
+
+    // lookup table and "FDRE/FDSE flip-flop"
     always @* begin
         // LUT inputs
         ins = {ibufs,obuf};

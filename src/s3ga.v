@@ -116,10 +116,10 @@ endmodule
 module switch #(
     parameter M         = 8,            // M contexts
     parameter B         = 4,            // no. of down switches (subcluster branch factor)
-    parameter UP_I_W    = 12,           // up   switch(*)  input  width  (*: 0 if none)
-    parameter UP_O_W    = 8,            // up   switch(*)  output width  ""
-    parameter DN_I_W    = 4,            // down switch(es) input  width
-    parameter DN_O_W    = 6,            // down switch(es) output width
+    parameter UP_I_W    = 12,           // up switch (*) input  width  (*: 0 if none)
+    parameter UP_O_W    = 8,            // up switch (*) output width  ""
+    parameter DN_I_W    = 4,            // down switches input  width
+    parameter DN_O_W    = 6,            // down switches output width
     parameter CFG_W     = 4             // config I/O width
 ) (
     input               clk,
@@ -219,13 +219,15 @@ module lb #(
     // input and output buffers
     reg  `NV(I,M)       ibufs;
     reg  `V(M)          obuf;
+    reg                 half_q;         // prev tick's half_lut output
 
-    // LUT inputs, IMUXs, and output
+    // LUT inputs, IMUXs, and outputs
     localparam LUT_IN_W = I*M + M;
     localparam LUT_SEL_W= $clog2(LUT_IN_W);
     `comb`V(LUT_IN_W)   ins;
     `comb`V(K)          idx;
     `comb               lut;
+    `comb               half_lut;
 
     // LUT configuration frames
     localparam LUT_W    = I*LB_SEL_W + K*LUT_SEL_W + (1<<K) + 3/*{fde,fds,fd}*/;
@@ -255,16 +257,26 @@ module lb #(
         for (i = 0; i < I; i=i+1)
             ibufs[i] <= {ibufs[i],imuxs[i]};
         obuf <= {obuf,lut};
+        half_q <= half_lut;
     end
 
     // lookup table and "FDRE/FDSE flip-flop"
     always @* begin
         // LUT inputs
-        ins = {ibufs,obuf};
-        for (i = 0; i < K; i=i+1)
+        for (i = 0; i < K; i=i+1) begin
+            ins = {ibufs,obuf};
+
+            // half-LUT cascade special inputs
+            if (i == K-2)
+                ins[LUT_IN_W-1] = half_q;
+            else if (i == K-1)
+                ins[LUT_IN_W-1] = 1'b1;
+
             idx[i] = ins[lut_in_sels[i]];
-        // LUT output
+        end
+        // LUT / half-LUT outputs
         lut = mask[idx];
+        half_lut = mask[idx[K-2:0]];
 
         o = lut;
 

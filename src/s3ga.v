@@ -313,32 +313,3 @@ module cfg_ram #(
     always @(posedge clk)
         ram <= {ram,ram_in};
 endmodule
-
-
-// Pipeline register(s)
-//
-// o == i after DELAY clock cycles, DELAY >= 0
-
-module pipe #(
-    parameter W         = 1,
-    parameter DELAY     = 1
-) (
-    input               clk,
-    input  `V(W)        i,
-    output `V(W)        o
-);
-    generate
-    if (DELAY == 0) begin
-        assign o = i;
-    end
-    else begin
-        reg  `NV(DELAY,W) qs;
-        integer j;
-        always @(posedge clk) begin
-            for (j = 0; j < DELAY; j=j+1)
-                qs[j] <= (j == 0) ? i : qs[j-1];
-        end
-        assign o = qs[DELAY-1];
-    end
-    endgenerate
-endmodule

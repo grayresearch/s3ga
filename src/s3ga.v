@@ -24,12 +24,12 @@ module s3ga #(
     output `V(IO_O_W)   io_o            // parallel IO outputs
 );
     cluster #(.N(N), .M(M), .B(B), .K(K), .LB_IB(LB_IB), .CFG_W(CFG_W),
-           .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .UP_I_WS(UP_I_WS), .UP_O_WS(UP_O_WS))
+              .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .UP_I_WS(UP_I_WS), .UP_O_WS(UP_O_WS), .ID(0))
         c(.clk, .rst, .cfg_i, .cfg_o(), .io_i, .io_o, .up_i('0), .up_o());
 endmodule
 
 
-// Cluster of LBs, or a switch and B sub-clusters
+// A cluster is an IOB, or a cluster of LBs, or a switch and B sub-clusters
 
 module cluster #(
     parameter N         = 128,          // N logical LUTs
@@ -42,6 +42,7 @@ module cluster #(
     parameter IO_O_W    = 8,            // parallel IO output width
     parameter UP_I_WS   = 06_06_00,     // up switch serial input  widths
     parameter UP_O_WS   = 04_04_00,     // up switch serial output widths
+    parameter ID        = 0,            // cluster identifier ::= ID of its first LB
 
     localparam UP_I_W   = UP_I_WS%100,  // up switch serial input  width
     localparam UP_O_W   = UP_O_WS%100,  // up switch serial output width
@@ -62,7 +63,12 @@ module cluster #(
 
     genvar i, j;
     generate
-    if (N == B*M) begin : leaf
+    if (N == B*M && ID == 0) begin : io
+        // first leaf cluster is the IO block
+        iob #(.M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .I_W(UP_I_W), .O_W(UP_O_W))
+            b(.clk, .rst, .cfg_i, .cfg_o, .io_i, .io_o, .i(up_i), .o(up_o));
+    end
+    else if (N == B*M) begin : leaf
         // s3ga<32> => { lb<8> lb<8> lb<8> lb<8> } directly, sans switch<32>
         for (i = 0; i < B; i=i+1) begin : lbs
             wire `V(B-1) peers;
@@ -73,25 +79,26 @@ module cluster #(
                   .globals(up_i), .peers, .o(up_o[i]));
         end
         assign cfg_o = cfgs[B];
-        // TODO: IO
-        assign io_o = up_o;
+        assign io_o = '0;
     end
     else begin : subs
         // recurse to B subclusters sized N/B
         wire `NV(B,DN_I_W)  dn_is;      // down switches' serial inputs
         wire `NV(B,DN_O_W)  dn_os;      // down switches' serial outputs
+        wire `NV(B,IO_O_W)  io_os;      // sub-clusters' IO outputs
 
         switch #(.M(M), .B(B), .UP_I_W(UP_I_W), .UP_O_W(UP_O_W), .DN_I_W(DN_I_W), .DN_O_W(DN_O_W), .CFG_W(CFG_W))
             sw(.clk, .rst, .cfg_i(cfgs[B]), .cfg_o(cfg_o), .up_i, .up_o, .dn_is, .dn_os);
 
         for (i = 0; i < B; i=i+1) begin : cs
             cluster #(.N(N/B), .M(M), .B(B), .K(K), .LB_IB(LB_IB), .CFG_W(CFG_W),
-                      .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .UP_I_WS(UP_I_WS/100), .UP_O_WS(UP_O_WS/100))
-                c(.clk, .rst, .cfg_i(cfgs[i]), .cfg_o(cfgs[i+1]), .io_i('0), .io_o(),
+                      .IO_I_W(IO_I_W), .IO_O_W(IO_O_W),
+                      .UP_I_WS(UP_I_WS/100), .UP_O_WS(UP_O_WS/100), .ID(ID+i*N/B))
+                c(.clk, .rst, .cfg_i(cfgs[i]), .cfg_o(cfgs[i+1]),
+                   .io_i, .io_o(io_os`at(i,IO_O_W)),
                   .up_i(dn_os`at(i,DN_O_W)), .up_o(dn_is`at(i,DN_I_W)));
         end
-        // TODO: IO
-        assign io_o = dn_is;
+        assign io_o = io_os`at(0,IO_O_W); // IO output, if any, is from first sub-cluster
     end
     endgenerate
 endmodule
@@ -140,13 +147,13 @@ module switch #(
                 assign is[i][UP_I_W + j*DN_I_W +: DN_I_W] = dn_is`at(j+(j>=i),DN_I_W);
             end
 
-            xbar #(.M(M), .B(B), .I_W(DN_X_W), .O_W(DN_O_W), .CFG_W(CFG_W))
+            xbar #(.M(M), .I_W(DN_X_W), .O_W(DN_O_W), .CFG_W(CFG_W))
                 x(.clk, .rst, .cfg_i(cfgs[i]), .cfg_o(cfgs[i+1]), .i(is[i]), .o(dn_os`at(i,DN_O_W)));
         end
 
         // optional up outputs' crossbar
         if (UP_O_W > 0) begin : up
-            xbar #(.M(M), .B(B), .I_W(B*DN_I_W), .O_W(UP_O_W), .CFG_W(CFG_W))
+            xbar #(.M(M), .I_W(B*DN_I_W), .O_W(UP_O_W), .CFG_W(CFG_W))
                 x(.clk, .rst, .cfg_i(cfgs[B]), .cfg_o, .i(dn_is), .o(up_o));
         end
         else begin
@@ -160,7 +167,6 @@ endmodule
 
 module xbar #(
     parameter M         = 8,            // M contexts
-    parameter B         = 4,            // no. of down switches (subcluster branch factor)
     parameter I_W       = 4,            // input  width
     parameter O_W       = 4,            // output width 
     parameter CFG_W     = 4             // config I/O width
@@ -271,6 +277,59 @@ module lb #(
         else
             o = (clk && (!fde || ce)) ? lut : obuf[N-1];
 */
+    end
+endmodule
+
+
+// Configurable M-context IO block
+//
+// Crossbar parallel inputs into serial outputs;
+// crossbar serial inputs into parallel outputs.
+
+module iob #(
+    parameter M         = 8,            // M contexts
+    parameter CFG_W     = 4,            // config I/O width
+    parameter IO_I_W    = 16,           // parallel IO input  width
+    parameter IO_O_W    = 16,           // parallel IO output width
+    parameter I_W       = 6,            // serial input  width
+    parameter O_W       = 4             // serial output width
+) (
+    input               clk,
+    input               rst,
+    input  `V(CFG_W)    cfg_i,
+    output `V(CFG_W)    cfg_o,
+    input  `V(IO_I_W)   io_i,
+    output reg`V(IO_O_W)io_o,
+    input  `V(I_W)      i,
+    input  `V(O_W)      o
+);
+    wire cfg;
+
+    // crossbar parallel inputs into serial outputs
+    xbar #(.M(M), .I_W(IO_I_W), .O_W(O_W), .CFG_W(CFG_W))
+        x(.clk, .rst, .cfg_i, .cfg_o(cfg), .i(io_i), .o(o));
+
+    // crossbar serial inputs into parallel outputs
+    // output configuration frame (1 context only)
+    localparam SEL_W    = $clog2(I_W);
+    localparam TICK_W   = $clog2(M);
+    wire `NV(IO_O_W,SEL_W)  sels;       // output selects
+    wire `NV(IO_O_W,TICK_W) ticks;      // output ticks
+    cfg_ram #(.M(1), .W(IO_O_W*(SEL_W+TICK_W)), .CFG_W(CFG_W))
+        sels_(.clk, .rst, .cfg_i(cfg), .cfg_o, .o({ticks,sels}));
+
+    // output muxes and flops: for each output bit, register some input net on some tick
+    // REVIEW: outputs do not switch simultaneously -- perhaps add tock output flop
+    reg `CNT(M) tick;
+    integer j;
+    always @(posedge clk) begin
+        tick <= rst ? '0 : tick + 1'b1;
+        for (j = 0; j < O_W; j=j+1) begin
+            if (rst)
+                io_o[j] <= 1'b0;
+            else if (ticks`at(j,TICK_W) == tick)
+                io_o[j] <= i[sels`at(j,SEL_W)];
+        end
     end
 endmodule
 

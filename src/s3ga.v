@@ -25,7 +25,7 @@ module s3ga #(
 );
     cluster #(.N(N), .M(M), .B(B), .K(K), .LB_IB(LB_IB), .CFG_W(CFG_W),
               .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .UP_I_WS(UP_I_WS), .UP_O_WS(UP_O_WS), .ID(0))
-        c(.clk, .rst, .cfg_i, .cfg_o(), .io_i, .io_o, .up_i('0), .up_o());
+        c(.clk, .rst, .cfg_i(rst ? '0 : cfg_i), .cfg_o(), .io_i, .io_o, .up_i('0), .up_o());
 endmodule
 
 
@@ -87,7 +87,9 @@ module cluster #(
         wire `NV(B,DN_O_W)  dn_os;      // down switches' serial outputs
         wire `NV(B,IO_O_W)  io_os;      // sub-clusters' IO outputs
 
-        switch #(.M(M), .B(B), .UP_I_W(UP_I_W), .UP_O_W(UP_O_W), .DN_I_W(DN_I_W), .DN_O_W(DN_O_W), .CFG_W(CFG_W))
+
+        switch #(.M(M), .B(B), .DELAY(1), .UP_I_W(UP_I_W), .UP_O_W(UP_O_W),
+                 .DN_I_W(DN_I_W), .DN_O_W(DN_O_W), .CFG_W(CFG_W))
             sw(.clk, .rst, .cfg_i(cfgs[B]), .cfg_o(cfg_o), .up_i, .up_o, .dn_is, .dn_os);
 
         for (i = 0; i < B; i=i+1) begin : cs
@@ -116,6 +118,7 @@ endmodule
 module switch #(
     parameter M         = 8,            // M contexts
     parameter B         = 4,            // no. of down switches (subcluster branch factor)
+    parameter DELAY     = 1,            // no. of output pipeline stages 
     parameter UP_I_W    = 12,           // up switch (*) input  width  (*: 0 if none)
     parameter UP_O_W    = 8,            // up switch (*) output width  ""
     parameter DN_I_W    = 4,            // down switches input  width
@@ -147,13 +150,13 @@ module switch #(
                 assign is[i][UP_I_W + j*DN_I_W +: DN_I_W] = dn_is`at(j+(j>=i),DN_I_W);
             end
 
-            xbar #(.M(M), .I_W(DN_X_W), .O_W(DN_O_W), .CFG_W(CFG_W))
+            xbar #(.M(M), .DELAY(DELAY), .I_W(DN_X_W), .O_W(DN_O_W), .CFG_W(CFG_W))
                 x(.clk, .rst, .cfg_i(cfgs[i]), .cfg_o(cfgs[i+1]), .i(is[i]), .o(dn_os`at(i,DN_O_W)));
         end
 
         // optional up outputs' crossbar
         if (UP_O_W > 0) begin : up
-            xbar #(.M(M), .I_W(B*DN_I_W), .O_W(UP_O_W), .CFG_W(CFG_W))
+            xbar #(.M(M), .DELAY(DELAY), .I_W(B*DN_I_W), .O_W(UP_O_W), .CFG_W(CFG_W))
                 x(.clk, .rst, .cfg_i(cfgs[B]), .cfg_o, .i(dn_is), .o(up_o));
         end
         else begin
@@ -167,6 +170,7 @@ endmodule
 
 module xbar #(
     parameter M         = 8,            // M contexts
+    parameter DELAY     = 0,            // no. of output pipeline stages
     parameter I_W       = 4,            // input  width
     parameter O_W       = 4,            // output width 
     parameter CFG_W     = 4             // config I/O width
@@ -176,10 +180,11 @@ module xbar #(
     input  `V(CFG_W)    cfg_i,
     output `V(CFG_W)    cfg_o,
     input  `V(I_W)      i,
-    output `comb`V(O_W) o
+    output `V(O_W)      o
 );
     localparam SEL_W    = $clog2(I_W);
     wire `NV(O_W,SEL_W) sels;
+    `comb`V(O_W)        o_;
 
     cfg_ram #(.M(M), .W(O_W*SEL_W), .CFG_W(CFG_W))
         selects(.clk, .rst, .cfg_i, .cfg_o, .o(sels));
@@ -187,8 +192,9 @@ module xbar #(
     integer j;
     always @* begin
         for (j = 0; j < O_W; j=j+1)
-            o[j] = i[sels`at(j,SEL_W)];
+            o_[j] = i[sels`at(j,SEL_W)];
     end
+    pipe #(.W(O_W), .DELAY(DELAY)) o_pipe(.clk, .i(o_), .o);
 endmodule
 
 
@@ -403,11 +409,39 @@ module cfg_ram #(
 
     always @* begin
         // recirculate the last shift register tap back to the front;
-        // during config, merge in new config segments
+        // during reset or config, merge in new config segments
         ram_in = ram`at(M-1,W);
-        if (st == ST_CFG)
+        if (rst || st == ST_CFG)
             ram_in`at(seg/M,CFG_W) = cfg_i;
     end
     always @(posedge clk)
         ram <= {ram,ram_in};
+endmodule
+
+
+// Pipeline register(s)
+// o == i after DELAY clock cycles, DELAY >= 0
+
+module pipe #(
+    parameter W         = 1,
+    parameter DELAY     = 1
+) (
+    input               clk,
+    input  `V(W)        i,
+    output `V(W)        o
+);
+    generate
+    if (DELAY == 0) begin
+        assign o = i;
+    end
+    else begin : q
+        reg `V(W) qs[0:DELAY-1];
+        integer j;
+        always @(posedge clk) begin
+            for (j = 0; j < DELAY; j=j+1)
+                qs[j] <= (j == 0) ? i : qs[j-1];
+        end
+        assign o = qs[DELAY-1];
+    end
+    endgenerate
 endmodule

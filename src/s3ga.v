@@ -6,7 +6,33 @@
 // S3GA: simple scalable serial FPGA
 
 module s3ga #(
-    parameter N         = 128,         // N logical LUTs
+    parameter N         = 128,          // N logical LUTs
+    parameter M         = 8,            // M contexts
+    parameter B         = 4,            // subcluster branching factor
+    parameter K         = 4,            // K-input LUTs
+    parameter LB_IB     = 3,            // no. of LB input buffers
+    parameter CFG_W     = 4,            // config I/O width
+    parameter IO_I_W    = 16,           // parallel IO input  width
+    parameter IO_O_W    = 16,           // parallel IO output width
+    parameter UP_I_WS   = 06_06_00,     // up switch serial input  widths
+    parameter UP_O_WS   = 04_04_00      // up switch serial output widths
+) (
+    input               clk,            // clock
+    input               rst,            // sync reset
+    input  `V(CFG_W)    cfg_i,          // config chain input
+    input  `V(IO_I_W)   io_i,           // parallel IO inputs
+    output `V(IO_O_W)   io_o            // parallel IO outputs
+);
+    cluster #(.N(N), .M(M), .B(B), .K(K), .LB_IB(LB_IB), .CFG_W(CFG_W),
+           .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .UP_I_WS(UP_I_WS), .UP_O_WS(UP_O_WS))
+        c(.clk, .rst, .cfg_i, .cfg_o(), .io_i, .io_o, .up_i('0), .up_o());
+endmodule
+
+
+// Cluster of LBs, or a switch and B sub-clusters
+
+module cluster #(
+    parameter N         = 128,          // N logical LUTs
     parameter M         = 8,            // M contexts
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
@@ -50,7 +76,7 @@ module s3ga #(
         // TODO: IO
         assign io_o = up_o;
     end
-    else begin : hier
+    else begin : subs
         // recurse to B subclusters sized N/B
         wire `NV(B,DN_I_W)  dn_is;      // down switches' serial inputs
         wire `NV(B,DN_O_W)  dn_os;      // down switches' serial outputs
@@ -59,8 +85,8 @@ module s3ga #(
             sw(.clk, .rst, .cfg_i(cfgs[B]), .cfg_o(cfg_o), .up_i, .up_o, .dn_is, .dn_os);
 
         for (i = 0; i < B; i=i+1) begin : cs
-            s3ga #(.N(N/B), .M(M), .B(B), .K(K), .LB_IB(LB_IB), .CFG_W(CFG_W),
-                   .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .UP_I_WS(UP_I_WS/100), .UP_O_WS(UP_O_WS/100))
+            cluster #(.N(N/B), .M(M), .B(B), .K(K), .LB_IB(LB_IB), .CFG_W(CFG_W),
+                      .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .UP_I_WS(UP_I_WS/100), .UP_O_WS(UP_O_WS/100))
                 c(.clk, .rst, .cfg_i(cfgs[i]), .cfg_o(cfgs[i+1]), .io_i('0), .io_o(),
                   .up_i(dn_os`at(i,DN_O_W)), .up_o(dn_is`at(i,DN_I_W)));
         end
@@ -110,8 +136,9 @@ module switch #(
             // ith xbar input is concat of up_i and dn_is[j] for j!=i
             if (UP_I_W > 0)
                 assign is[i][0 +: UP_I_W] = up_i;
-            for (j = 0; j < B-1; j=j+1)
+            for (j = 0; j < B-1; j=j+1) begin : is_
                 assign is[i][UP_I_W + j*DN_I_W +: DN_I_W] = dn_is`at(j+(j>=i),DN_I_W);
+            end
 
             xbar #(.M(M), .B(B), .I_W(DN_X_W), .O_W(DN_O_W), .CFG_W(CFG_W))
                 x(.clk, .rst, .cfg_i(cfgs[i]), .cfg_o(cfgs[i+1]), .i(is[i]), .o(dn_os`at(i,DN_O_W)));

@@ -142,12 +142,12 @@ module switch #(
     generate
         // down outputs' crossbars
         for (i = 0; i < B; i=i+1) begin : dns
-            // ith xbar input is concat of up_i and dn_is[j] for j!=i
-            if (UP_I_W > 0)
-                assign is[i][0 +: UP_I_W] = up_i;
+            // ith xbar input is concat of dn_is[j] and up_i for j!=i
             for (j = 0; j < B-1; j=j+1) begin : is_
-                assign is[i][UP_I_W + j*DN_I_W +: DN_I_W] = dn_is`at(j+(j>=i),DN_I_W);
+                assign is[i][j*DN_I_W +: DN_I_W] = dn_is`at(j+(j>=i),DN_I_W);
             end
+            if (UP_I_W > 0)
+                assign is[i][(B-1)*DN_I_W +: UP_I_W] = up_i;
 
             xbar #(.M(M), .DELAY(DELAY), .I_W(DN_X_W), .O_W(DN_O_W), .CFG_W(CFG_W))
                 x(.clk, .rst, .cfg_i(cfgs[i]), .cfg_o(cfgs[i+1]), .i(is[i]), .o(dn_os`at(i,DN_O_W)));

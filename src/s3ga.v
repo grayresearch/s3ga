@@ -87,7 +87,6 @@ module cluster #(
         wire `NV(B,DN_O_W)  dn_os;      // down switches' serial outputs
         wire `NV(B,IO_O_W)  io_os;      // sub-clusters' IO outputs
 
-
         switch #(.M(M), .B(B), .DELAY(1), .UP_I_W(UP_I_W), .UP_O_W(UP_O_W),
                  .DN_I_W(DN_I_W), .DN_O_W(DN_O_W), .CFG_W(CFG_W))
             sw(.clk, .rst, .cfg_i(cfgs[B]), .cfg_o(cfg_o), .up_i, .up_o, .dn_is, .dn_os);
@@ -261,7 +260,7 @@ module lb #(
     // LB input buffers and output buffer
     always @(posedge clk) begin
         for (i = 0; i < I; i=i+1)
-            ibufs[i] <= {ibufs[i],imuxs[i]};
+            ibufs`at(i,M) <= {ibufs`at(i,M),imuxs[i]};
         obuf <= {obuf,lut};
         half_q <= half_lut;
     end
@@ -278,7 +277,7 @@ module lb #(
             else if (i == K-1)
                 ins[LUT_IN_W-1] = 1'b1;
 
-            idx[i] = ins[lut_in_sels[i]];
+            idx[i] = ins[lut_in_sels`at(i,LUT_SEL_W)];
         end
         // LUT / half-LUT outputs
         lut = mask[idx];
@@ -361,7 +360,7 @@ endmodule
 
 module cfg_ram #(
     parameter M         = 8,            // M switch contexts
-    parameter W         = 8,            // output width
+    parameter W         = 7,            // output width
     parameter CFG_W     = 4             // config I/O width
 ) (
     input               clk,
@@ -374,10 +373,11 @@ module cfg_ram #(
     localparam ST_WAIT  = 0;            // wait for 1 signaling start of config frame
     localparam ST_CFG   = 1;            // receive config data and configure ram
     localparam ST_PASS  = 2;            // pass more config data to next cfg_ram
+    localparam ST_CNT   = 3;            // no. of states
     // assert(W%CFG_W == 0);
     localparam CFG_SEGS = M * `SEGS(W,CFG_W); // no. of config frame segments
 
-    reg  `CNT(ST_PASS)  st;             // config FSM state
+    reg  `CNT(ST_CNT)   st;             // config FSM state
     reg  `CNT(CFG_SEGS) seg;            // config segment counter, in [0,CFG_SEGS).
 
     always @(posedge clk) begin
@@ -402,20 +402,25 @@ module cfg_ram #(
     end
 
     // serial shift register ram
-    `comb`V(W)          ram_in;
+
+    localparam WW_W = `SEGS(W,CFG_W) * CFG_W; // widen W to CFG_W multiple
+    `comb`V(WW_W)       ram_in;
     reg  `NV(M,W)       ram;
 
     assign o = ram`at(M-1,W);
 
+    integer i;
     always @* begin
         // recirculate the last shift register tap back to the front;
         // during reset or config, merge in new config segments
         ram_in = ram`at(M-1,W);
-        if (rst || st == ST_CFG)
-            ram_in`at(seg/M,CFG_W) = cfg_i;
+        if (st == ST_CFG)
+            ram_in[seg/M*CFG_W +: CFG_W] = cfg_i; // safe: ram_in size is mult of CFG_W
+        if (rst)
+            ram_in = '0;
     end
     always @(posedge clk)
-        ram <= {ram,ram_in};
+        ram <= {ram,ram_in[W-1:0]};
 endmodule
 
 
@@ -423,7 +428,7 @@ endmodule
 // o == i after DELAY clock cycles, DELAY >= 0
 
 module pipe #(
-    parameter W         = 1,
+    parameter W         = 4,
     parameter DELAY     = 1
 ) (
     input               clk,

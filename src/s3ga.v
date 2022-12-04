@@ -169,7 +169,7 @@ endmodule
 
 module xbar #(
     parameter M         = 8,            // M contexts
-    parameter DELAY     = 0,            // no. of output pipeline stages
+    parameter DELAY     = 1,            // no. of output pipeline stages
     parameter I_W       = 4,            // input  width
     parameter O_W       = 4,            // output width 
     parameter CFG_W     = 4             // config I/O width

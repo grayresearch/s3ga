@@ -70,13 +70,14 @@ module cluster #(
     end
     else if (N == B*M) begin : leaf
         // s3ga<32> => { lb<8> lb<8> lb<8> lb<8> } directly, sans switch<32>
+        wire `V(B)      halfs;          // half-LUT cascade chains, 0->1->2->3->0
         for (i = 0; i < B; i=i+1) begin : lbs
             wire `V(B-1) peers;
             for (j = 0; j < B-1; j=j+1)
                 assign peers[j] = up_o[i + (j>=i)];
             lb #(.M(M), .B(B), .K(K), .G(UP_I_W), .I(LB_IB), .CFG_W(CFG_W))
                 b(.clk, .rst, .cfg_i(cfgs[i]), .cfg_o(cfgs[i+1]),
-                  .globals(up_i), .peers, .o(up_o[i]));
+                  .globs(up_i), .peers, .half_i(halfs[(i+B-1)%B]), .half_o(halfs[i]), .o(up_o[i]));
         end
         assign cfg_o = cfgs[B];
         assign io_o = '0;
@@ -208,13 +209,23 @@ module lb #(
     parameter CFG_W     = 4             // config I/O width
 ) (
     input               clk,
-    input               rst,
+    input               rst,            // sync reset, negated simultaneously everywhere
     input  `V(CFG_W)    cfg_i,
     output `V(CFG_W)    cfg_o,
-    input  `V(G)        globals,
-    input  `V(B-1)      peers,
+    input  `V(G)        globs,          // global inputs
+    input  `V(B-1)      peers,          // serial outputs from peer LB8s in this X32 cluster
+    input               half_i,         // half-LUT cascade in
+    output `comb        half_o,         // half-LUT cascade out
     output `comb        o
 );
+    // timekeeping
+    reg  `CNT(M)        tick;
+    reg                 last;           // tick m % M == M-1 since reset, tock next
+    always @(posedge clk) begin
+        tick <= rst ?   '0 : tick + 1'b1;
+        last <= rst ? 1'b0 : tick == M-2;
+    end
+
     // LB IMUXs
     localparam LB_IN_W  = G+B-2;
     localparam LB_SEL_W = $clog2(LB_IN_W);
@@ -232,7 +243,6 @@ module lb #(
     `comb`V(LUT_IN_W)   ins;
     `comb`V(K)          idx;
     `comb               lut;
-    `comb               half_lut;
 
     // LUT configuration frames
     localparam LUT_W    = I*LB_SEL_W + K*LUT_SEL_W + (1<<K) + 3/*{fde,fds,fd}*/;
@@ -250,7 +260,7 @@ module lb #(
     always @* begin
         for (i = 0; i < I; i=i+1) begin
             // ith LB input is one of G globals or B-2 of the B-1 peer LB outputs
-            lb_ins = globals << (B-2);
+            lb_ins = globs << (B-2);
             for (j = 0; j < B-2; j=j+1)
                 lb_ins[j] = peers[j + (j>=i)];
             imuxs[i] = lb_ins[lb_in_sels`at(i,LB_SEL_W)];
@@ -262,7 +272,7 @@ module lb #(
         for (i = 0; i < I; i=i+1)
             ibufs`at(i,M) <= {ibufs`at(i,M),imuxs[i]};
         obuf <= {obuf,lut};
-        half_q <= half_lut;
+        half_q <= last ? half_i : half_o;   // half-LUT cascade
     end
 
     // lookup table and "FDRE/FDSE flip-flop"
@@ -281,7 +291,7 @@ module lb #(
         end
         // LUT / half-LUT outputs
         lut = mask[idx];
-        half_lut = mask[idx[K-2:0]];
+        half_o = mask[idx[K-2:0]];
 
         o = lut;
 

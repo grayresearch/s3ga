@@ -20,12 +20,13 @@ CFG_W = 4
 
 async def reset(dut):
     dut.rst.value = 1
+    dut.cfg.value = 1
     await ClockCycles(dut.clk, M+1)
     dut.rst.value = 0
 
 @cocotb.test()
 async def test_switch(dut):
-    sw = s3ga.Switch(M, B, DELAY, UP_I_W, UP_O_W, DN_I_W, DN_O_W, CFG_W=4)
+    sw = s3ga.Switch(M, B, DELAY, UP_I_W, UP_O_W, DN_I_W, DN_O_W, CFG_W)
 
     clock = Clock(dut.clk, 10, units="ns")
     cocotb.fork(clock.start())
@@ -47,6 +48,7 @@ async def test_switch(dut):
     for cfg_i in sw.cfg():
         dut.cfg_i.value = cfg_i
         await FallingEdge(dut.clk)
+    dut.cfg.value = 0
     dut.cfg_i.value = 0
 
     # line up to next tock -- hmm, need a tock signal to sync on

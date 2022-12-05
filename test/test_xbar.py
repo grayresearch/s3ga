@@ -28,6 +28,7 @@ map = [ [0,0,0,0], [0,1,2,3], [3,2,1,0], [3,0,1,2],
 
 async def reset(dut):
     dut.rst.value = 1
+    dut.cfg.value = 1
     await ClockCycles(dut.clk, M+1)
     dut.rst.value = 0
 
@@ -61,6 +62,7 @@ async def test_xbar(dut):
             await FallingEdge(dut.clk)
 
     # config ram -> pass state
+    dut.cfg.value = 0
     dut.cfg_i.value = 0
     assert dut.selects.st.value == ST_PASS
 

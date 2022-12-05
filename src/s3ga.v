@@ -232,11 +232,16 @@ module lb #(
     output `comb        o
 );
     // timekeeping
-    reg  `CNT(M)        tick;
-    reg                 last;           // tick m % M == M-1 since reset, tock next
-    always @(posedge clk) begin
-        tick <= cfg ?   '0 : tick + 1'b1;
-        last <= cfg ? 1'b0 : tick == M-2;
+    reg  `CNT(M)        tick;           // tick % M since reset
+    reg                 last;           // last tick (tick%M = M-1), tock next
+    reg                 cfg_q;          // cfg delayed and aligned to tocks
+    always @(posedge clk) begin 
+        tick <= rst ?   '0 : tick + 1'b1;
+        last <= rst ? 1'b0 : tick == M-2;
+        if (rst)
+            cfg_q <= 1;
+        else if (last)
+            cfg_q <= cfg;
     end
 
     // LB IMUXs
@@ -276,7 +281,7 @@ module lb #(
             lb_ins = globs << (B-2);
             for (j = 0; j < B-2; j=j+1)
                 lb_ins[j] = peers[j + (j>=i)];
-            imuxs[i] = cfg & lb_ins[lb_in_sels`at(i,LB_SEL_W)];
+            imuxs[i] = lb_ins[lb_in_sels`at(i,LB_SEL_W)];
         end
     end
 
@@ -284,8 +289,8 @@ module lb #(
     always @(posedge clk) begin
         for (i = 0; i < I; i=i+1)
             ibufs`at(i,M) <= {ibufs`at(i,M),imuxs[i]};
-        obuf <= {obuf,(lut&~cfg)};
-        half_q <= cfg ? 1'b0 : last ? half_i : half_o;   // half-LUT cascade
+        obuf <= {obuf,lut};
+        half_q <= last ? half_i : half_o;   // half-LUT cascade
     end
 
     // lookup table and "FDRE/FDSE flip-flop"
@@ -303,8 +308,9 @@ module lb #(
             idx[i] = ins[lut_in_sels`at(i,LUT_SEL_W)];
         end
         // LUT / half-LUT outputs
-        lut = mask[idx];
-        half_o = mask[idx[K-2:0]];
+        // REVIEW: SPEED
+        lut = ~cfg_q & mask[idx];
+        half_o = ~cfg_q & mask[idx[K-2:0]];
 
         o = lut;
 

@@ -2,6 +2,7 @@
 # By Jan Gray. Copyright (C) 2021-2022 Gray Research LLC. All rights reserved.
 
 from enum import IntEnum
+from functools import reduce
 import random
 import math
 
@@ -9,6 +10,7 @@ class CfgRamState(IntEnum):
     ST_WAIT = 0
     ST_CFG  = 1
     ST_PASS = 2
+
 
 class LB:
     def __init__(self, M, B, K, G, I, CFG_W, luts):
@@ -43,7 +45,7 @@ class LB:
 
         yield 1                     # start
 
-        for seg in range(segs):
+        for s in range(segs):
             for m in range(self.M):
                 lut = self.luts[m]
                 f = self.mask(lut[self.K])
@@ -56,7 +58,7 @@ class LB:
                 # LB input mux selects not yet implemented, currently zero
                 # 3 FDRE control bits not yet implemented
                 f = f << 3
-                yield cfg_seg(f, seg, self.CFG_W)
+                yield seg(f, s, self.CFG_W)
 
         for i in range(self.M-2):   # M-1, -1 more for the cfg_o reg
             yield 0                 # pad
@@ -89,6 +91,68 @@ class LB:
         return o
 
 
+class IOB:
+    def __init__(self, M, IO_I_W, IO_O_W, I_W, O_W, CFG_W, i_xbar, o_sels):
+        assert len(i_xbar) == M and len(i_xbar[0]) == O_W and len(o_sels) == IO_O_W
+        self.M = M
+        self.IO_I_W = IO_I_W
+        self.IO_O_W = IO_O_W
+        self.I_W = I_W
+        self.O_W = O_W
+        self.CFG_W = CFG_W
+        self.i_xbar = Xbar(M, IO_I_W, O_W, CFG_W, i_xbar) # IO_I_W!
+        self.o_sels = o_sels
+
+    # yield IOB's configuration bitstream
+    def cfg(self):
+        # parallel to serial input crossbar
+        for cfg_i in self.i_xbar.cfg():
+            yield cfg_i
+
+        # serial to parallel output selects
+        yield 1                         # start
+        sel_w = (self.I_W-1).bit_length()
+        tick_w = (self.M-1).bit_length()
+        sels = reduce(lambda a,b: a|b,
+            [(self.o_sels[i] % self.I_W) << i*sel_w for i in range(self.IO_O_W)])
+        ticks = reduce(lambda a,b: a|b,
+            [(self.o_sels[i] // self.I_W) << i*tick_w for i in range(self.IO_O_W)])
+        f = (ticks << (self.IO_O_W * sel_w)) | sels;
+        segs = math.ceil(self.IO_O_W * (sel_w + tick_w) / self.CFG_W)
+        for s in range(segs):
+            yield seg(f, s, self.CFG_W)
+        for _ in range((2*self.M-2 - segs%self.M) % self.M):
+            yield 0                     # pad
+
+class Xbar:
+    def __init__(self, M, I_W, O_W, CFG_W, xbar):
+        assert len(xbar) == M and len(xbar[0]) == O_W
+        self.M = M
+        self.I_W = I_W
+        self.O_W = O_W
+        self.CFG_W = CFG_W
+        self.xbar = xbar
+
+    # yield Xbar's configuration bitstream
+    def cfg(self):
+        sel_w = (self.I_W-1).bit_length()
+        sels_w = self.O_W * sel_w
+        segs = math.ceil(sels_w/self.CFG_W)
+
+        yield 1                         # start
+        for s in range(segs):
+            for m in range(self.M):
+                f = reduce(lambda a,b: a|b,
+                    [self.xbar[m][i] << (sel_w*i) for i in range(self.O_W)])
+                yield seg(f, s, self.CFG_W)
+        for i in range(self.M-2):
+            yield 0                     # pad
+
+    def eval(self, m, inp):
+        return reduce(lambda a,b: a|b,
+            [((inp >> self.xbar[m][i]) & 1) << i for i in range(self.O_W)])
+
+
 class Switch:
     def __init__(self, M, B, DELAY, UP_I_W, UP_O_W, DN_I_W, DN_O_W, CFG_W):
         self.M = M
@@ -117,12 +181,12 @@ class Switch:
 
         for b in range(self.B):
             yield 1                     # start
-            for seg in range(dn_segs):
+            for s in range(dn_segs):
                 for m in range(self.M):
                     f = 0
                     for i in range(self.DN_O_W-1,-1,-1):
                         f = (f << dn_sel_w) | self.dns_map[b][m][i]
-                    yield cfg_seg(f, seg, self.CFG_W)
+                    yield seg(f, s, self.CFG_W)
             for i in range(self.M-2):   # M-1, -1 more for the cfg_o reg
                 yield 0                 # pad
 
@@ -130,12 +194,12 @@ class Switch:
         up_sels_w = self.UP_O_W * up_sel_w
         up_segs = math.ceil(up_sels_w/self.CFG_W)
         yield 1                         # start
-        for seg in range(up_segs):
+        for s in range(up_segs):
             for m in range(self.M):
                 f = 0
                 for i in range(self.UP_O_W-1,-1,-1):
                     f = (f << up_sel_w) | self.up_map[m][i]
-                yield cfg_seg(f, seg, self.CFG_W)
+                yield seg(f, s, self.CFG_W)
         for i in range(self.M-2):
             yield 0                     # pad
 
@@ -161,5 +225,6 @@ class Switch:
         return (up_o,dn_os)
 
 
-def cfg_seg(f, i, cfg_w):
-    return (f >> (i*cfg_w)) & ((1<<cfg_w)-1)
+# return ith w-bit segment of e
+def seg(e, i, w):
+    return (e >> (i*w)) & ((1<<w)-1)

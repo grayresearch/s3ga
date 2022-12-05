@@ -6,7 +6,7 @@
 export PYTHONPATH := test:$(PYTHONPATH)
 export LIBPYTHON_LOC=$(shell cocotb-config --libpython)
 
-all: test_pipe test_cfg_ram test_xbar test_switch test_lb
+all: test_pipe test_cfg_ram test_xbar test_switch test_lb test_iob
 
 test_pipe:
 	rm -rf sim; mkdir sim
@@ -36,6 +36,12 @@ test_lb:
 	rm -rf sim; mkdir sim
 	iverilog -o sim/sim.vvp -Isrc -s lb -s dump -g2012 src/s3ga.v test/dump_lb.v
 	MODULE=test.test_lb vvp -M $$(cocotb-config --prefix)/cocotb/libs -m libcocotbvpi_icarus sim/sim.vvp
+	! grep failure results.xml
+
+test_iob:
+	rm -rf sim; mkdir sim
+	iverilog -o sim/sim.vvp -Isrc -s iob -s dump -g2012 src/s3ga.v test/dump_iob.v
+	MODULE=test.test_iob vvp -M $$(cocotb-config --prefix)/cocotb/libs -m libcocotbvpi_icarus sim/sim.vvp
 	! grep failure results.xml
 
 clean:

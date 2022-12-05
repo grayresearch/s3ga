@@ -3,7 +3,7 @@
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, FallingEdge
+from cocotb.triggers import ClockCycles, RisingEdge, FallingEdge
 from functools import reduce
 import math
 import random
@@ -50,9 +50,18 @@ inc_xor_luts = [
 
 async def reset(dut):
     dut.rst.value = 1
+    dut.m.value = 0
     dut.cfg.value = 1
     await ClockCycles(dut.clk, 2*M)
     dut.rst.value = 0
+    cocotb.fork(m_counter(dut))
+
+ticks = 0
+async def m_counter(dut):
+    global ticks
+    while True:
+        await RisingEdge(dut.clk)
+        dut.m.value = ticks = (ticks + 1) % M
 
 @cocotb.test()
 async def test_lb(dut):
@@ -76,14 +85,14 @@ async def test_lb(dut):
     # configure lb
     for cfg_i in lb.cfg():
         dut.cfg_i.value = cfg_i
-        await FallingEdge(dut.clk)
-
-    assert dut.cfg_o.value == 0
-    dut.cfg.value = 0   # configuration done
-    dut.cfg_i.value = 0
+        await RisingEdge(dut.clk)
 
     # let LB come out of internal cfg hold
-    await FallingEdge(dut.clk)
+    dut.cfg_i.value = 0
+    global ticks
+    while ticks != 0:
+        await RisingEdge(dut.clk)
+    dut.cfg.value = 0   # configuration done
 
     # test the counter / xor results
     for i in range(1,64):

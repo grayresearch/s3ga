@@ -6,6 +6,7 @@ from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge
 import math
 import random
+from s3ga import seg
 
 # xbar parameters
 M     = 8 # M contexts
@@ -80,7 +81,7 @@ async def test_xbar(dut):
         for m in range(M):
             expect = 0
             for j in range(O_W-1,-1,-1):
-                expect = (expect << 1) | ((i >> map[m][j]) & 1)
+                expect = (expect << 1) | seg(i, map[m][j], 1)
             dut.i.value = i
             await FallingEdge(dut.clk)
             assert dut.o.value == expect
@@ -90,7 +91,7 @@ async def test_xbar(dut):
         for m in range(M):
             expect = 0
             for j in range(O_W-1,-1,-1):
-                expect = (expect << 1) | ((i >> map[m][j]) & 1)
+                expect = (expect << 1) | seg(i, map[m][j], 1)
             dut.i.value = i
             await FallingEdge(dut.clk)
             assert dut.o.value == expect

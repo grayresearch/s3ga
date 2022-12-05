@@ -431,7 +431,7 @@ module iob #(
     integer j;
     always @* begin
         io_o_nxt = io_o_;
-        for (j = 0; j < O_W; j=j+1)
+        for (j = 0; j < IO_O_W; j=j+1)
             if (ticks`at(j,TICK_W) == m)
                 io_o_nxt[j] <= i[sels`at(j,SEL_W)];
     end

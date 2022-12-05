@@ -71,8 +71,8 @@ async def test_iob(dut):
     while ticks != M-1:
         await RisingEdge(dut.clk)
 
-    # test parallel inputs -> serial outputs
-    for i in tests():
+    # test parallel -> serial inputs
+    for i in input_tests():
         dut.io_i.value = i
         await RisingEdge(dut.clk)
         for m in range(M):
@@ -80,9 +80,28 @@ async def test_iob(dut):
             e = reduce(lambda a,b: a|b, [seg(i, i_xbar[m][j], 1) << j for j in range(O_W)])
             assert dut.o.value.integer == e
 
-def tests():
+    # test serial -> parallel outputs
+    dut.io_i.value = 0
+    for i in output_tests():
+        while ticks != 0:
+            await RisingEdge(dut.clk)
+        for m in range(M):
+            dut.i.value = seg(i, m, I_W)
+            await RisingEdge(dut.clk)
+        await FallingEdge(dut.clk)
+        e = reduce(lambda a,b: a|b, [seg(i, o_sels[j], 1) << j for j in range(IO_O_W)])
+        assert dut.io_o.value.integer == e
+
+def input_tests():
     yield 0
     for j in range(IO_I_W):
         yield 1<<j
     for _ in range(1000):
         yield random.randrange(1<<IO_I_W)
+
+def output_tests():
+    yield 0
+    for j in range(M*I_W):
+        yield 1<<j
+    for _ in range(1000):
+        yield random.randrange(1<<(M*I_W))

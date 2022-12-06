@@ -41,7 +41,7 @@ module s3ga #(
     reg                 rst_;           // local reset
     reg                 tock_;          // local tock
     reg                 cfg_;           // local cfg
-    wire                cfg_o;
+    wire `V(CFG_W)      cfg_o;
 
     always @(posedge clk) begin
         m     <= rst ? '0 : m + 1'b1;
@@ -53,14 +53,14 @@ module s3ga #(
             rst_ <= rst;
 
         if (rst) begin
-            cfg_st <= 0;                // -> await cfg_o
+            cfg_st <= 2'd0;             // -> await cfg_o
             cfg_ <= 1;
         end
-        else if (cfg_st == 0 && cfg_o) begin
-            cfg_st <= 1;                // -> await tock
+        else if (cfg_st == 2'd0 && cfg_o) begin
+            cfg_st <= 2'd1;             // -> await tock
         end
-        else if (cfg_st == 1 && tock_) begin
-            cfg_st <= 2;                // -> done
+        else if (cfg_st == 2'd1 && tock_) begin
+            cfg_st <= 2'd2;             // -> done
             cfg_ <= 0;
         end
     end

@@ -24,8 +24,8 @@ module s3ga #(
     parameter CFG_W     = 4,            // config I/O width
     parameter IO_I_W    = 32,           // parallel IO input  width
     parameter IO_O_W    = 32,           // parallel IO output width
-    parameter UP_I_WS   = 24_12_06_06_00,  // up switch serial input  widths
-    parameter UP_O_WS   = 16_08_04_04_00   // up switch serial output widths
+    parameter UP_I_WS   = 06_06_12_24_00,  // up switch serial input  widths
+    parameter UP_O_WS   = 04_04_08_16_00   // up switch serial output widths
 ) (
     input               clk,            // clock
     input               rst,            // sync reset -- > M+log4(N)+1 cycles please

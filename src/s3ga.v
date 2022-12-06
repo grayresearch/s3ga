@@ -16,16 +16,16 @@
 // S3GA: simple scalable serial FPGA
 
 module s3ga #(
-    parameter N         = 128,          // N logical LUTs
+    parameter N         = 512,          // N logical LUTs
     parameter M         = 8,            // M contexts
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
     parameter LB_IB     = 3,            // no. of LB input buffers
     parameter CFG_W     = 4,            // config I/O width
-    parameter IO_I_W    = 16,           // parallel IO input  width
-    parameter IO_O_W    = 16,           // parallel IO output width
-    parameter UP_I_WS   = 06_06_00,     // up switch serial input  widths
-    parameter UP_O_WS   = 04_04_00      // up switch serial output widths
+    parameter IO_I_W    = 32,           // parallel IO input  width
+    parameter IO_O_W    = 32,           // parallel IO output width
+    parameter UP_I_WS   = 12_06_06_00,  // up switch serial input  widths
+    parameter UP_O_WS   = 08_04_04_00   // up switch serial output widths
 ) (
     input               clk,            // clock
     input               rst,            // sync reset -- > M+log4(N)+1 cycles please

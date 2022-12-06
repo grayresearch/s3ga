@@ -44,6 +44,12 @@ test_iob:
 	MODULE=test.test_iob vvp -M $$(cocotb-config --prefix)/cocotb/libs -m libcocotbvpi_icarus sim/sim.vvp
 	! grep failure results.xml
 
+test_s3ga:
+	rm -rf sim; mkdir sim
+	iverilog -o sim/sim.vvp -Isrc -s s3ga -s dump -g2012 src/s3ga.v test/dump_s3ga.v
+	MODULE=test.test_s3ga vvp -M $$(cocotb-config --prefix)/cocotb/libs -m libcocotbvpi_icarus sim/sim.vvp
+	! grep failure results.xml
+
 clean:
 	rm -rf *.vcd sim test/__pycache__ results.xml
 

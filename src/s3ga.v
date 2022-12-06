@@ -43,7 +43,7 @@ module s3ga #(
     reg                 cfg_;           // local cfg
     wire                cfg_o;
 
-    always @(posedge rst) begin
+    always @(posedge clk) begin
         m     <= rst ? '0 : m + 1'b1;
         tock_ <= rst ? '0 : (m == M-2);
 
@@ -118,10 +118,10 @@ module cluster #(
     wire `CNT(M)        m_qq;
 
     // one cycle delayed
-    pipe #(.W(bits({m,cfg,rst})), .DELAY(1))
+    pipe #(.W($clog2(M)+2), .DELAY(1))
         q(.clk, .i({m,cfg,rst}), .o({m_q,cfg_q,rst_q}));
     // LEVEL-1 cycles further delayed
-    pipe #(.W(bits({m,cfg,rst})), .DELAY(LEVEL-1))
+    pipe #(.W($clog2(M)+2), .DELAY(LEVEL-1))
         qq(.clk, .i({m_q,cfg_q,rst_q}), .o({m_qq,cfg_qq,rst_qq}));
 
     genvar i, j;

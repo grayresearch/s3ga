@@ -11,6 +11,16 @@ class CfgRamState(IntEnum):
     ST_CFG  = 1
     ST_PASS = 2
 
+class S3GA:
+    def __init__(self, N, M, B, K, LB_IB, CFG_W, luts):
+        self.N = N
+        self.M = M
+        self.B = B
+        self.K = K
+        self.LB_IB = LB_IB
+        self.CFG_W = CFG_W
+        self.luts = luts
+
 
 class LB:
     def __init__(self, M, B, K, G, I, CFG_W, luts):

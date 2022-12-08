@@ -6,7 +6,7 @@ set ::env(ROUTING_CORES) 4
 set ::env(VERILOG_FILES) [glob $::env(DESIGN_DIR)/src/*.v]
 
 # Fill this
-set ::env(CLOCK_PERIOD) "10.0"
+set ::env(CLOCK_PERIOD) "8"
 set ::env(CLOCK_PORT) "clk"
 set ::env(FP_SIZING) absolute
 set ::env(DIE_AREA) "0 0 2920 3520"

@@ -82,8 +82,8 @@ module cluster #(
     parameter K         = 4,            // K-input LUTs
     parameter LB_IB     = 3,            // no. of LB input buffers
     parameter CFG_W     = 1,            // config I/O width
-    parameter IO_I_W    = 8,            // parallel IO input  width
-    parameter IO_O_W    = 8,            // parallel IO output width
+    parameter IO_I_W    = 32,           // parallel IO input  width
+    parameter IO_O_W    = 32,           // parallel IO output width
     parameter UP_I_WS   = 06_06_00,     // up switch serial input  widths
     parameter UP_O_WS   = 04_04_00,     // up switch serial output widths
     parameter ID        = 0,            // cluster identifier ::= ID of its first LB
@@ -129,7 +129,7 @@ module cluster #(
     if (N == B*M && ID == 0) begin : io
         // first leaf cluster is the IO block
         iob #(.M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .I_W(UP_I_W), .O_W(UP_O_W))
-            b(.clk, .rst(rst_q), .m(m_q), .cfg(cfg_q), .cfg_i, .cfg_o, .io_i, .io_o, .i(up_i), .o(up_o));
+            iob_(.clk, .rst(rst_q), .m(m_q), .cfg(cfg_q), .cfg_i, .cfg_o, .io_i, .io_o, .i(up_i), .o(up_o));
     end
     else if (N == B*M) begin : leaf
         // s3ga<32> => { lb<8> lb<8> lb<8> lb<8> } directly, sans switch<32>
@@ -139,7 +139,7 @@ module cluster #(
             for (j = 0; j < B-1; j=j+1)
                 assign peers[j] = up_o[i + (j>=i)];
             lb #(.M(M), .B(B), .K(K), .G(UP_I_W), .I(LB_IB), .CFG_W(CFG_W))
-                b(.clk, .rst(rst_q), .m(m_q), .cfg(cfg_q), .cfg_i(cfgs[i]), .cfg_o(cfgs[i+1]),
+                lb_(.clk, .rst(rst_q), .m(m_q), .cfg(cfg_q), .cfg_i(cfgs[i]), .cfg_o(cfgs[i+1]),
                   .globs(up_i), .peers, .half_i(halfs[(i+B-1)%B]), .half_o(halfs[i]), .o(up_o[i]));
         end
         assign cfg_o = cfgs[B];

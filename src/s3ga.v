@@ -23,9 +23,7 @@ module s3ga #(
     parameter LB_IB     = 3,            // no. of LB input buffers
     parameter CFG_W     = 4,            // config I/O width
     parameter IO_I_W    = 32,           // parallel IO input  width
-    parameter IO_O_W    = 32,           // parallel IO output width
-    parameter UP_I_WS   = 06_06_12_24_00,  // up switch serial input  widths
-    parameter UP_O_WS   = 04_04_08_16_00   // up switch serial output widths
+    parameter IO_O_W    = 32            // parallel IO output width
 ) (
     input               clk,            // clock
     input               rst,            // sync reset -- > M+log4(N)+1 cycles please
@@ -36,6 +34,9 @@ module s3ga #(
     output `V(IO_O_W)   io_o            // parallel IO outputs
 );
     localparam LEVEL    = $clog2(N/M)/$clog2(B);
+    localparam UP_I_WS  = 06_06_12_24 / 100**(4-LEVEL) * 100; // up switch input widths
+    localparam UP_O_WS  = 04_04_08_16 / 100**(4-LEVEL) * 100; // up switch output widths
+
     reg  `CNT(3)        cfg_st;         // state: 0: (need cfg_o=1); 1: (need tock); 2: config'd
     reg  `CNT(M)        m;              // local cycle % M
     reg                 rst_;           // local reset
@@ -81,7 +82,7 @@ module cluster #(
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
     parameter LB_IB     = 3,            // no. of LB input buffers
-    parameter CFG_W     = 1,            // config I/O width
+    parameter CFG_W     = 4,            // config I/O width
     parameter IO_I_W    = 32,           // parallel IO input  width
     parameter IO_O_W    = 32,           // parallel IO output width
     parameter UP_I_WS   = 06_06_00,     // up switch serial input  widths
@@ -392,7 +393,7 @@ module iob #(
     input  `V(IO_I_W)   io_i,           // per M-cycle
     output reg `V(IO_O_W) io_o,         // per M-cycle
     input  `V(I_W)      i,
-    input  `V(O_W)      o
+    output `V(O_W)      o
 );
     wire `V(CFG_W)      cfg_;
     reg  `V(IO_O_W)     io_o_;          // prior pending output nets

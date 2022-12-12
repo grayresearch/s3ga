@@ -16,16 +16,14 @@
 // S3GA: simple scalable serial FPGA
 
 module s3ga #(
-    parameter N         = 2048,         // N logical LUTs
+    parameter N         = 128,         // N logical LUTs
     parameter M         = 8,            // M contexts
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
     parameter LB_IB     = 3,            // no. of LB input buffers
     parameter CFG_W     = 4,            // config I/O width
     parameter IO_I_W    = 32,           // parallel IO input  width
-    parameter IO_O_W    = 32,           // parallel IO output width
-    parameter UP_I_WS   = 06_06_12_24_00,  // up switch serial input  widths
-    parameter UP_O_WS   = 04_04_08_16_00   // up switch serial output widths
+    parameter IO_O_W    = 32            // parallel IO output width
 ) (
     input               clk,            // clock
     input               rst,            // sync reset -- > M+log4(N)+1 cycles please
@@ -36,6 +34,9 @@ module s3ga #(
     output `V(IO_O_W)   io_o            // parallel IO outputs
 );
     localparam LEVEL    = $clog2(N/M)/$clog2(B);
+    localparam UP_I_WS  = 06_06_12_24 / 100**(4-LEVEL) * 100; // up switch input widths
+    localparam UP_O_WS  = 04_04_08_16 / 100**(4-LEVEL) * 100; // up switch output widths
+
     reg  `CNT(3)        cfg_st;         // state: 0: (need cfg_o=1); 1: (need tock); 2: config'd
     reg  `CNT(M)        m;              // local cycle % M
     reg                 rst_;           // local reset
@@ -81,7 +82,7 @@ module cluster #(
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
     parameter LB_IB     = 3,            // no. of LB input buffers
-    parameter CFG_W     = 1,            // config I/O width
+    parameter CFG_W     = 4,            // config I/O width
     parameter IO_I_W    = 32,           // parallel IO input  width
     parameter IO_O_W    = 32,           // parallel IO output width
     parameter UP_I_WS   = 06_06_00,     // up switch serial input  widths
@@ -439,7 +440,7 @@ module iob #(
 endmodule
 
 
-// Configuration ram with M W-bit contexts using serial shift register memory
+// Configuration ram with M W-bit contexts
 //
 // Config FSM: reset/0 -> wait-for-1 * -> configure * -> passthru/cfg_i.
 // Config data is received in CFG_W segments: M lsbs' segments then M next-lsbs' segments, etc.
@@ -448,8 +449,9 @@ endmodule
 
 module cfg_ram #(
     parameter M         = 8,            // M switch contexts
-    parameter W         = 7,            // output width
-    parameter CFG_W     = 4             // config I/O width
+    parameter W         = 11,           // output width
+    parameter CFG_W     = 4,            // config I/O width
+    parameter USE_SR    = 1             // use shift register RAM
 ) (
     input               clk,
     input               rst,
@@ -463,7 +465,6 @@ module cfg_ram #(
     localparam ST_CFG   = 1;            // receive config data and configure ram
     localparam ST_PASS  = 2;            // pass more config data to next cfg_ram
     localparam ST_CNT   = 3;            // no. of states
-    // assert(W%CFG_W == 0);
     localparam CFG_SEGS = M * `SEGS(W,CFG_W); // no. of config frame segments
 
     reg  `CNT(ST_CNT)   st;             // config FSM state
@@ -490,26 +491,44 @@ module cfg_ram #(
         end
     end
 
-    // serial shift register ram
-
-    localparam WW_W = `SEGS(W,CFG_W) * CFG_W; // widen W to CFG_W multiple
-    `comb`V(WW_W)       ram_in;
-    reg  `NV(M,W)       ram;
-
-    assign o = ram`at(M-1,W);
-
+    reg `V(W) ram[0:M-1];
     integer i;
-    always @* begin
-        // recirculate the last shift register tap back to the front;
-        // during reset or config, merge in new config segments
-        ram_in = ram`at(M-1,W);
-        if (st == ST_CFG)
-            ram_in[seg/M*CFG_W +: CFG_W] = cfg_i; // safe: ram_in size is mult of CFG_W
-        if (rst)
-            ram_in = '0;
+
+    generate if (USE_SR) begin : sr     // shift register RAM
+        // ignores m! -- must carefully synchronize configuration timing
+//      localparam WW_W = `SEGS(W,CFG_W) * CFG_W; // widen W to CFG_W multiple
+        assign o = ram[M-1];
+
+        `comb`V(W) ram_in;
+        always @* begin
+            // recirculate the last shift register tap back to the front;
+            // during reset or config, merge in new config segments
+            ram_in = ram[M-1];
+            if (st == ST_CFG)
+                ram_in[seg/M*CFG_W +: CFG_W] = cfg_i;   // may clip last segment when W%CFG_W != 0
+            if (rst)
+                ram_in = '0;
+        end
+        always @(posedge clk) begin
+            for (i = 0; i < M; i=i+1)
+                ram[i] <= (i == 0) ? ram_in : ram[i-1];
+        end
     end
-    always @(posedge clk)
-        ram <= {ram,ram_in[W-1:0]};
+    else begin : ra                     // DFF RAM
+        // uses m! -- configure a segment on any tick
+        reg `V(W) ram[0:M-1];
+        always @(posedge clk) begin
+            if (rst) begin
+                for (i = 0; i < M; i=i+1)
+                    ram[i] <= '0;
+            end
+            else if (st == ST_CFG)
+                ram[seg%M]`at(seg/M,CFG_W) <= cfg_i;
+        end
+
+        // pipeline ram data out (when M != 1) else just ram[0]
+        pipe #(.W(W), .DELAY(M!=1)) o_pipe(.clk, .i(ram[(m+1)%M]), .o);
+    end endgenerate
 endmodule
 
 

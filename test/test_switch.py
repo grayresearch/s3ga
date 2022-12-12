@@ -3,7 +3,7 @@
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, FallingEdge
+from cocotb.triggers import ClockCycles, RisingEdge, FallingEdge
 import math
 import random
 import s3ga
@@ -21,8 +21,17 @@ CFG_W = 4
 async def reset(dut):
     dut.rst.value = 1
     dut.cfg.value = 1
+    dut.m.value = 0
     await ClockCycles(dut.clk, M+1)
     dut.rst.value = 0
+    cocotb.fork(m_counter(dut))
+
+ticks = 0
+async def m_counter(dut):
+    global ticks
+    while True:
+        await RisingEdge(dut.clk)
+        dut.m.value = ticks = (ticks + 1) % M
 
 @cocotb.test()
 async def test_switch(dut):

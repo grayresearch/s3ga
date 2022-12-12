@@ -3,15 +3,17 @@
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, FallingEdge
+from cocotb.triggers import ClockCycles, RisingEdge, FallingEdge
+from functools import reduce
 import math
 import random
 
 # cfg_ram parameters
 M = 8
-W = 7
+W = 11
 CFG_W = 4
-SEGS = M*math.ceil(W/CFG_W)
+W_SEGS = math.ceil(W/CFG_W)
+SEGS = M*W_SEGS
 ST_WAIT = 0
 ST_CFG = 1
 ST_PASS = 2
@@ -19,8 +21,17 @@ ST_PASS = 2
 async def reset(dut):
     dut.rst.value = 1
     dut.cfg_i.value = 0
-    await ClockCycles(dut.clk, M)
+    dut.m.value = 0
+    await ClockCycles(dut.clk, SEGS+1)
     dut.rst.value = 0
+    cocotb.fork(m_counter(dut))
+
+ticks = 0
+async def m_counter(dut):
+    global ticks
+    while True:
+        await RisingEdge(dut.clk)
+        dut.m.value = ticks = (ticks + 1) % M
 
 @cocotb.test()
 async def test_cfg_ram(dut):
@@ -42,7 +53,7 @@ async def test_cfg_ram(dut):
     await FallingEdge(dut.clk)
     assert dut.cfg_o.value == 0
 
-    # configure to (0x80,0x91,...,0xF7) & 0x7F
+    # configure
     for i in range(SEGS):
         dut.cfg_i.value = i
         assert dut.st.value == ST_CFG
@@ -54,8 +65,9 @@ async def test_cfg_ram(dut):
     dut.cfg_i.value = 0
 
     # test ram outputs
-    for i in range(M):
-        assert dut.o.value == (((i+8)<<4) + i) & ((1<<W)-1)
+    for m in range(M):
+        e = reduce(lambda a,b: a|b, [(((s*M + m) & ((1<<CFG_W)-1)) << (s*CFG_W)) for s in range(W_SEGS)]) & ((1<<W)-1) 
+        assert dut.o.value == e
         await FallingEdge(dut.clk)
         assert dut.st.value == ST_PASS
         assert dut.cfg_o.value == 0

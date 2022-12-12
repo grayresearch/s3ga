@@ -26,6 +26,7 @@ o_sels = [i for i in range(IO_O_W)]
 async def reset(dut):
     dut.rst.value = 1
     dut.cfg.value = 1
+    dut.m.value = 0
     await ClockCycles(dut.clk, 2*M)
     dut.rst.value = 0
     cocotb.fork(m_counter(dut))

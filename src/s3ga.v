@@ -393,7 +393,7 @@ module iob #(
     input  `V(IO_I_W)   io_i,           // per M-cycle
     output reg `V(IO_O_W) io_o,         // per M-cycle
     input  `V(I_W)      i,
-    input  `V(O_W)      o
+    output `V(O_W)      o
 );
     wire `V(CFG_W)      cfg_;
     reg  `V(IO_O_W)     io_o_;          // prior pending output nets

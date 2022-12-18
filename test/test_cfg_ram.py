@@ -1,5 +1,20 @@
 # S3GA: simple scalable serial FPGA
-# By Jan Gray. Copyright (C) 2021-2022 Gray Research LLC. All rights reserved.
+# By Jan Gray. Copyright (C) 2021-2022 Gray Research LLC.
+
+# SPDX-FileCopyrightText: 2022 Gray Research LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
 
 import cocotb
 from cocotb.clock import Clock
@@ -11,15 +26,14 @@ import random
 # cfg_ram parameters
 M = 8
 W = 11
-CFG_W = 4
-W_SEGS = math.ceil(W/CFG_W)
+CFG_W = 5
+SEG_W = CFG_W-1
+W_SEGS = math.ceil(W/SEG_W)
 SEGS = M*W_SEGS
-ST_WAIT = 0
-ST_CFG = 1
-ST_PASS = 2
 
 async def reset(dut):
     dut.rst.value = 1
+    dut.cfg.value = 0
     dut.cfg_i.value = 0
     dut.m.value = 0
     await ClockCycles(dut.clk, SEGS+1)
@@ -39,42 +53,34 @@ async def test_cfg_ram(dut):
     cocotb.fork(clock.start())
 
     await reset(dut)
-    assert dut.cfg_o.value == 0
+    assert dut.cfgd.value == 0
 
     # test reset resets the ram
     for i in range(2*M):
+        await RisingEdge(dut.clk)
         await FallingEdge(dut.clk)
-        assert dut.cfg_o.value == 0
+        assert dut.cfgd.value == 0
         assert dut.o.value == 0
-        assert dut.st.value == ST_WAIT
 
-    # -> config state
-    dut.cfg_i.value = 1
-    await FallingEdge(dut.clk)
-    assert dut.cfg_o.value == 0
-
-    # configure
+    # configure something else
     for i in range(SEGS):
-        dut.cfg_i.value = i
-        assert dut.st.value == ST_CFG
+        dut.cfg_i.value = (1<<SEG_W)|i
         await FallingEdge(dut.clk)
-        assert dut.cfg_o.value == 0
+        assert dut.cfgd.value == 0
 
-    # last segment received -> pass state
-    assert dut.st.value == ST_PASS
+    # configure this
+    dut.cfg.value = 1
+    for i in range(SEGS):
+        assert dut.cfgd.value == 0
+        dut.cfg_i.value = (1<<SEG_W)|i
+        await FallingEdge(dut.clk)
+
+    assert dut.cfgd.value == 1
     dut.cfg_i.value = 0
 
     # test ram outputs
     for m in range(M):
-        e = reduce(lambda a,b: a|b, [(((s*M + m) & ((1<<CFG_W)-1)) << (s*CFG_W)) for s in range(W_SEGS)]) & ((1<<W)-1) 
+        e = reduce(lambda a,b: a|b, [(((s*M + m) & ((1<<SEG_W)-1)) << (s*SEG_W)) for s in range(W_SEGS)]) & ((1<<W)-1) 
         assert dut.o.value == e
         await FallingEdge(dut.clk)
-        assert dut.st.value == ST_PASS
-        assert dut.cfg_o.value == 0
-
-    # test pass through of more config data
-    for i in range(4<<CFG_W):
-        r = random.randrange(16)
-        dut.cfg_i.value = r
-        await FallingEdge(dut.clk)
-        assert dut.cfg_o.value == r
+        assert dut.cfgd.value == 1

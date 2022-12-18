@@ -1,15 +1,25 @@
 # S3GA: simple scalable serial FPGA
-# By Jan Gray. Copyright (C) 2021-2022 Gray Research LLC. All rights reserved.
+# By Jan Gray. Copyright (C) 2021-2022 Gray Research LLC.
+
+# SPDX-FileCopyrightText: 2022 Gray Research LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
 
 from enum import IntEnum
 from functools import reduce
 import random
 import math
-
-class CfgRamState(IntEnum):
-    ST_WAIT = 0
-    ST_CFG  = 1
-    ST_PASS = 2
 
 class S3GA:
     def __init__(self, N, M, B, K, LB_IB, CFG_W, luts):
@@ -29,7 +39,7 @@ class LB:
         self.K = K
         self.G = G
         self.I = I
-        self.CFG_W = CFG_W
+        self.SEG_W = CFG_W - 1
         self.tick = 0
         self.luts = luts
         self.obuf = [0]*M
@@ -46,14 +56,12 @@ class LB:
 
     # yield LB's configuration bitstream
     def cfg(self):
-        lb_in_w = self.G + self.B - 2
+        lb_in_w = self.G + 1
         lb_sel_w = (lb_in_w-1).bit_length()
         lut_in_w = self.I*self.M + self.M
         lut_sel_w = (lut_in_w-1).bit_length()
         lut_w = self.I*lb_sel_w + self.K*lut_sel_w + (1<<self.K) + 3
-        segs = math.ceil(lut_w/self.CFG_W)
-
-        yield 1                     # start
+        segs = math.ceil(lut_w/self.SEG_W)
 
         for s in range(segs):
             for m in range(self.M):
@@ -68,10 +76,7 @@ class LB:
                 # LB input mux selects not yet implemented, currently zero
                 # 3 FDRE control bits not yet implemented
                 f = f << 3
-                yield seg(f, s, self.CFG_W)
-
-        for i in range(self.M-2):   # M-1, -1 more for the cfg_o reg
-            yield 0                 # pad
+                yield (1<<self.SEG_W) | seg(f, s, self.SEG_W)
 
     def eval(self):
         lut = self.luts[self.tick]
@@ -109,7 +114,7 @@ class IOB:
         self.IO_O_W = IO_O_W
         self.I_W = I_W
         self.O_W = O_W
-        self.CFG_W = CFG_W
+        self.SEG_W = CFG_W - 1
         self.i_xbar = Xbar(M, IO_I_W, O_W, CFG_W, i_xbar) # IO_I_W!
         self.o_sels = o_sels
 
@@ -120,7 +125,6 @@ class IOB:
             yield cfg_i
 
         # serial to parallel output selects
-        yield 1                         # start
         sel_w = (self.I_W-1).bit_length()
         tick_w = (self.M-1).bit_length()
         sels = reduce(lambda a,b: a|b,
@@ -128,11 +132,9 @@ class IOB:
         ticks = reduce(lambda a,b: a|b,
             [(self.o_sels[i] // self.I_W) << i*tick_w for i in range(self.IO_O_W)])
         f = (ticks << (self.IO_O_W * sel_w)) | sels;
-        segs = math.ceil(self.IO_O_W * (sel_w + tick_w) / self.CFG_W)
+        segs = math.ceil(self.IO_O_W * (sel_w + tick_w) / self.SEG_W)
         for s in range(segs):
-            yield seg(f, s, self.CFG_W)
-        for _ in range((2*self.M-2 - segs%self.M) % self.M):
-            yield 0                     # pad
+            yield (1<<self.SEG_W) | seg(f, s, self.SEG_W)
 
 class Xbar:
     def __init__(self, M, I_W, O_W, CFG_W, xbar):
@@ -140,23 +142,20 @@ class Xbar:
         self.M = M
         self.I_W = I_W
         self.O_W = O_W
-        self.CFG_W = CFG_W
+        self.SEG_W = CFG_W - 1
         self.xbar = xbar
 
     # yield Xbar's configuration bitstream
     def cfg(self):
         sel_w = (self.I_W-1).bit_length()
         sels_w = self.O_W * sel_w
-        segs = math.ceil(sels_w/self.CFG_W)
+        segs = math.ceil(sels_w/self.SEG_W)
 
-        yield 1                         # start
         for s in range(segs):
             for m in range(self.M):
                 f = reduce(lambda a,b: a|b,
                     [self.xbar[m][i] << (sel_w*i) for i in range(self.O_W)])
-                yield seg(f, s, self.CFG_W)
-        for i in range(self.M-2):
-            yield 0                     # pad
+                yield (1<<self.SEG_W) | seg(f, s, self.SEG_W)
 
     def eval(self, m, inp):
         return reduce(lambda a,b: a|b,
@@ -172,7 +171,7 @@ class Switch:
         self.DN_I_W = DN_I_W
         self.DN_O_W = DN_O_W
         self.DELAY = DELAY
-        self.CFG_W = CFG_W
+        self.SEG_W = CFG_W - 1
         self.DN_X_W = DN_X_W = UP_I_W + (B-1)*DN_I_W
 
         # random switch xbar maps
@@ -187,31 +186,25 @@ class Switch:
     def cfg(self):
         dn_sel_w = (self.DN_X_W-1).bit_length()
         dn_sels_w = self.DN_O_W * dn_sel_w
-        dn_segs = math.ceil(dn_sels_w/self.CFG_W)
+        dn_segs = math.ceil(dn_sels_w/self.SEG_W)
 
         for b in range(self.B):
-            yield 1                     # start
             for s in range(dn_segs):
                 for m in range(self.M):
                     f = 0
                     for i in range(self.DN_O_W-1,-1,-1):
                         f = (f << dn_sel_w) | self.dns_map[b][m][i]
-                    yield seg(f, s, self.CFG_W)
-            for i in range(self.M-2):   # M-1, -1 more for the cfg_o reg
-                yield 0                 # pad
+                    yield (1<<self.SEG_W) | seg(f, s, self.SEG_W)
 
         up_sel_w = (self.B*self.DN_I_W-1).bit_length()
         up_sels_w = self.UP_O_W * up_sel_w
-        up_segs = math.ceil(up_sels_w/self.CFG_W)
-        yield 1                         # start
+        up_segs = math.ceil(up_sels_w/self.SEG_W)
         for s in range(up_segs):
             for m in range(self.M):
                 f = 0
                 for i in range(self.UP_O_W-1,-1,-1):
                     f = (f << up_sel_w) | self.up_map[m][i]
-                yield seg(f, s, self.CFG_W)
-        for i in range(self.M-2):
-            yield 0                     # pad
+                yield (1<<self.SEG_W) | seg(f, s, self.SEG_W)
 
     def eval(self, m, up_i, dn_is):
         dn_os = 0

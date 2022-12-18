@@ -1,5 +1,20 @@
 # S3GA: simple scalable serial FPGA
-# By Jan Gray. Copyright (C) 2021-2022 Gray Research LLC. All rights reserved.
+# By Jan Gray. Copyright (C) 2021-2022 Gray Research LLC.
+
+# SPDX-FileCopyrightText: 2022 Gray Research LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
 
 import cocotb
 from cocotb.clock import Clock
@@ -13,15 +28,11 @@ M     = 8 # M contexts
 DELAY = 1 # no. of output pipeline stages
 I_W   = 4 # input  width
 O_W   = 4 # output width 
-CFG_W = 4 # config I/O width
+CFG_W = 5 # config I/O width
+SEG_W = CFG_W-1 # config I/O width
 
 SEL_W = (I_W-1).bit_length()
-SEGS  = M * O_W * SEL_W // CFG_W
-
-# cfg state machine
-ST_WAIT = 0
-ST_CFG  = 1
-ST_PASS = 2
+SEGS  = M * O_W * SEL_W // SEG_W
 
 # M=8 different input permutations
 map = [ [0,0,0,0], [0,1,2,3], [3,2,1,0], [3,0,1,2],
@@ -50,31 +61,23 @@ async def test_xbar(dut):
     dut.cfg_i.value = 0
     dut.i.value = 0
     await reset(dut)
-    assert dut.cfg_o.value == 0
+    assert dut.cfgd.value == 0
 
     # test reset resets the xbar
     for i in range(2*M):
         await FallingEdge(dut.clk)
-        assert dut.cfg_o.value == 0
+        assert dut.cfgd.value == 0
         assert dut.o.value == 0
-        assert dut.selects.st.value == ST_WAIT
-
-    # config ram -> config state
-    dut.cfg_i.value = 1
-    await FallingEdge(dut.clk)
-    assert dut.cfg_o.value == 0
-    assert dut.selects.st.value == ST_CFG
 
     # config map[] into xbar.selects
     for i in range(2):
         for m in range(M):
-            dut.cfg_i.value = (map[m][2*i+1] << 2) | map[m][2*i] 
+            dut.cfg_i.value = (1<<SEG_W) | (map[m][2*i+1] << 2) | map[m][2*i] 
             await FallingEdge(dut.clk)
 
-    # config ram -> pass state
-    dut.cfg.value = 0
+    # configured
     dut.cfg_i.value = 0
-    assert dut.selects.st.value == ST_PASS
+    assert dut.cfgd.value == 1
 
     # check cfg_ram correctly loaded
     for m in range(M):
@@ -83,7 +86,6 @@ async def test_xbar(dut):
             expect = (expect << 2) | map[m][3-i]
         assert dut.sels.value == expect
         await FallingEdge(dut.clk)
-        assert dut.cfg_o.value == 0
 
     # check crossbar works for various inputs across M contexts / mappings
     for i in range(1<<I_W):
@@ -104,10 +106,3 @@ async def test_xbar(dut):
             dut.i.value = i
             await FallingEdge(dut.clk)
             assert dut.o.value == expect
-
-    # test pass through of more config data
-    for i in range(4<<CFG_W):
-        r = random.randrange(16)
-        dut.cfg_i.value = r
-        await FallingEdge(dut.clk)
-        assert dut.cfg_o.value == r

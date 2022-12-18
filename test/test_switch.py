@@ -1,5 +1,20 @@
 # S3GA: simple scalable serial FPGA
-# By Jan Gray. Copyright (C) 2021-2022 Gray Research LLC. All rights reserved.
+# By Jan Gray. Copyright (C) 2021-2022 Gray Research LLC.
+
+# SPDX-FileCopyrightText: 2022 Gray Research LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
 
 import cocotb
 from cocotb.clock import Clock
@@ -16,11 +31,10 @@ UP_I_W = 12
 UP_O_W = 8
 DN_I_W = 4
 DN_O_W = 6
-CFG_W = 4
+CFG_W = 5
 
 async def reset(dut):
     dut.rst.value = 1
-    dut.cfg.value = 1
     dut.m.value = 0
     await ClockCycles(dut.clk, M+1)
     dut.rst.value = 0
@@ -40,29 +54,30 @@ async def test_switch(dut):
     clock = Clock(dut.clk, 10, units="ns")
     cocotb.fork(clock.start())
 
+    dut.cfg.value = 1
     dut.cfg_i.value = 0
     dut.up_i.value = 0
     dut.dn_is.value = 0
     await reset(dut)
-    assert dut.cfg_o.value == 0
+    assert dut.cfgd.value == 0
 
     # test reset resets the switch
     for i in range(2*M):
         await FallingEdge(dut.clk)
-        assert dut.cfg_o.value == 0
+        assert dut.cfgd.value == 0
         assert dut.up_o.value == 0
         assert dut.dn_os.value == 0
 
     # configure switch
+    while dut.m.value != 0:
+        await RisingEdge(dut.clk)
     for cfg_i in sw.cfg():
         dut.cfg_i.value = cfg_i
-        await FallingEdge(dut.clk)
-    dut.cfg.value = 0
-    dut.cfg_i.value = 0
+        await RisingEdge(dut.clk)
 
-    # line up to next tock -- hmm, need a tock signal to sync on
-    for _ in range(M-2):
-        await FallingEdge(dut.clk)
+    dut.cfg_i.value = 0
+    await FallingEdge(dut.clk)
+    assert dut.cfgd.value == 1
 
     # switch tests
     for (m, up_i, dn_is, up_o, dn_os) in switch_tests(sw, 1000):

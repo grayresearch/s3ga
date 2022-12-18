@@ -1,5 +1,20 @@
 # S3GA: simple scalable serial FPGA
-# By Jan Gray. Copyright (C) 2021-2022 Gray Research LLC. All rights reserved.
+# By Jan Gray. Copyright (C) 2021-2022 Gray Research LLC.
+
+# SPDX-FileCopyrightText: 2022 Gray Research LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
 
 import cocotb
 from cocotb.clock import Clock
@@ -13,9 +28,9 @@ import s3ga
 M = 8
 B = 4
 K = 4
-G = 6
+G = 7
 I = 3
-CFG_W = 4
+CFG_W = 5
 
 # some 4-LUTs and 3,3-LUTs (where input #3=sel)
 def inc0(a,_,_2,sel):
@@ -70,12 +85,14 @@ async def test_lb(dut):
     clock = Clock(dut.clk, 10, units="ns")
     cocotb.fork(clock.start())
 
+    dut.grst.value = 1
+    dut.cfg.value = 1
     dut.cfg_i.value = 0
     dut.globs.value = 0
     dut.peers.value = 0
     dut.half_i.value = 0
     await reset(dut)
-    assert dut.cfg_o.value == 0
+    assert dut.cfgd.value == 0
 
     # test reset resets the lb
     for i in range(2*M):
@@ -83,6 +100,10 @@ async def test_lb(dut):
         assert dut.o.value == 0
 
     # configure lb
+    while dut.m.value != 0:
+        await RisingEdge(dut.clk)
+        await FallingEdge(dut.clk)
+
     for cfg_i in lb.cfg():
         dut.cfg_i.value = cfg_i
         await RisingEdge(dut.clk)
@@ -93,6 +114,7 @@ async def test_lb(dut):
     while ticks != 0:
         await RisingEdge(dut.clk)
     dut.cfg.value = 0   # configuration done
+    dut.grst.value = 0
 
     # test the counter / xor results
     for i in range(1,64):

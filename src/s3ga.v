@@ -90,7 +90,8 @@ module s3ga #(
     pipe #(.W(2),     .DELAY(LEVEL))   oq(.clk, .i({!grst,tock_}), .o({done,tock}));
 
     cluster #(.N(N), .M(M), .B(B), .K(K), .LB_IB(LB_IB), .CFG_W(CFG_W),
-              .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .UP_I_WS(UP_I_WS), .UP_O_WS(UP_O_WS), .ID(0))
+              .IO_I_W(IO_I_W), .IO_O_W(IO_O_W),
+              .UP_I_WS(UP_I_WS), .UP_O_WS(UP_O_WS), .UP_O_DELAY(0), .ID(0))
         c(.clk, .rst(rst_), .grst, .m, .cfg(1'b1), .cfgd, .cfg_i(cfg_i_),
           .io_i, .io_o, .up_i('0), .up_o());
 endmodule
@@ -99,16 +100,17 @@ endmodule
 // A cluster is an IOB, or a cluster of LBs, or a switch and B sub-clusters
 
 module cluster #(
-    parameter N         = 128,          // N logical LUTs
+    parameter N         = 32,           // N logical LUTs
     parameter M         = 8,            // M contexts
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
     parameter LB_IB     = 3,            // no. of LB input buffers
     parameter CFG_W     = 5,            // config I/O width
-    parameter IO_I_W    = 32,           // parallel IO input  width
-    parameter IO_O_W    = 32,           // parallel IO output width
-    parameter UP_I_WS   = 07_07_00,     // up switch serial input  widths
-    parameter UP_O_WS   = 04_04_00,     // up switch serial output widths
+    parameter IO_I_W    = 0,           // parallel IO input  width
+    parameter IO_O_W    = 0,           // parallel IO output width
+    parameter UP_I_WS   = 07_07,       // up switch serial input  widths
+    parameter UP_O_WS   = 04_04,       // up switch serial output widths
+    parameter UP_O_DELAY = 1,           // default up_o delay
     parameter ID        = 0,            // cluster identifier ::= ID of its first LB
 
     localparam UP_I_W   = UP_I_WS%100,  // up switch serial input  width
@@ -130,6 +132,8 @@ module cluster #(
 );
     localparam LEVEL    = $clog2(N/M)/$clog2(B);
 
+    wire `V(UP_O_W) up_o_;          // up switch serial output (pre-delay)
+
     wire `V(B+1)    cfgs;               // local config enables
     assign cfgs[0] = cfg;
 
@@ -144,11 +148,11 @@ module cluster #(
 
     genvar i, j;
     generate
-    if (N == B*M && ID == 0) begin : io
+    if (N == B*M && ID == 0 && IO_O_W > 0) begin : io
         // first leaf cluster is the IO block
         iob #(.M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .I_W(UP_I_W), .O_W(UP_O_W))
             iob_(.clk, .rst(rst_q), .grst(grst_q), .m(m_q), .cfg, .cfgd, .cfg_i(cfg_i_q),
-                 .io_i, .io_o, .i(up_i), .o(up_o));
+                 .io_i, .io_o, .i(up_i), .o(up_o_));
     end
     else if (N == B*M) begin : leaf
         // s3ga<32> => { lb<8> lb<8> lb<8> lb<8> } directly, sans switch<32>
@@ -156,11 +160,11 @@ module cluster #(
         for (i = 0; i < B; i=i+1) begin : lbs
             wire `V(B-1) peers;
             for (j = 0; j < B-1; j=j+1)
-                assign peers[j] = up_o[i + (j>=i)];
+                assign peers[j] = up_o_[i + (j>=i)];
             lb #(.M(M), .B(B), .K(K), .G(UP_I_W), .I(LB_IB), .CFG_W(CFG_W))
                 lb_(.clk, .rst(rst_q), .grst(grst_q), .m(m_q),
                     .cfg(cfgs[i]), .cfgd(cfgs[i+1]), .cfg_i(cfg_i_q),
-                    .globs(up_i), .peers, .half_i(halfs[(i+B-1)%B]), .half_o(halfs[i]), .o(up_o[i]));
+                    .globs(up_i), .peers, .half_i(halfs[(i+B-1)%B]), .half_o(halfs[i]), .o(up_o_[i]));
         end
         assign cfgd = cfgs[B];
         assign io_o = '0;
@@ -176,25 +180,31 @@ module cluster #(
 
         wire `NV(B,DN_I_W) dn_is;       // down switches' serial inputs
         wire `NV(B,DN_O_W) dn_os;       // down switches' serial outputs
-        wire `NV(B,IO_O_W) io_os;       // sub-clusters' IO outputs
+        localparam IO_X_W = `MAX(1,IO_O_W); // stupid Verilog 0-width bus handling
+        wire `NV(B,IO_X_W) io_os;       // sub-clusters' IO outputs
 
         switch #(.M(M), .B(B), .DELAY(1), .UP_I_W(UP_I_W), .UP_O_W(UP_O_W),
                  .DN_I_W(DN_I_W), .DN_O_W(DN_O_W), .CFG_W(CFG_W))
             sw(.clk, .rst(rst_qq), .m(m_qq), .cfg(cfgs[B]), .cfgd, .cfg_i(cfg_i_qq),
-               .up_i, .up_o, .dn_is, .dn_os);
+               .up_i, .up_o(up_o_), .dn_is, .dn_os);
 
         for (i = 0; i < B; i=i+1) begin : cs
             cluster #(.N(N/B), .M(M), .B(B), .K(K), .LB_IB(LB_IB), .CFG_W(CFG_W),
                       .IO_I_W(IO_I_W), .IO_O_W(IO_O_W),
-                      .UP_I_WS(UP_I_WS/100), .UP_O_WS(UP_O_WS/100), .ID(ID+i*N/B))
+                      .UP_I_WS(UP_I_WS/100), .UP_O_WS(UP_O_WS/100), .UP_O_DELAY(0), .ID(ID+i*N/B))
                 c(.clk, .rst(rst_q), .grst(grst_q), .m(m_q),
                   .cfg(cfgs[i]), .cfgd(cfgs[i+1]), .cfg_i(cfg_i_q),
-                  .io_i, .io_o(io_os`at(i,IO_O_W)),
+                  .io_i, .io_o(io_os`at(i,IO_X_W)),
                   .up_i(dn_os`at(i,DN_O_W)), .up_o(dn_is`at(i,DN_I_W)));
         end
-        assign io_o = io_os`at(0,IO_O_W); // IO output, if any, is from first sub-cluster
+        // IO output, if any, is from first sub-cluster
+        if (IO_O_W == 0)
+            assign io_o = '0;
+        else
+            assign io_o = io_os`at(0,IO_O_W);
     end
     endgenerate
+    pipe #(.W(UP_O_W), .DELAY(UP_O_DELAY)) up_o_pipe(.clk, .i(up_o_), .o(up_o));
 endmodule
 
 

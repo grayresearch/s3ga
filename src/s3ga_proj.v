@@ -18,6 +18,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 `default_nettype none
+`ifndef MPRJ_IO_PADS
+`include "defines.h"
+`endif
 
 /*
 S3GA interface
@@ -121,7 +124,7 @@ module s3ga_proj #(
     output [`MPRJ_IO_PADS-1:0] io_oeb,
 
     // IRQ
-    output [2:0] irq
+    output [2:0] user_irq
 );
     // CSR address lsbs
     localparam [5:0] s3ctl  = 6'h00;
@@ -268,7 +271,7 @@ module s3ga_proj #(
     assign la_data_out = io_o << 64;
 
     // other
-    assign irq = '0;
+    assign user_irq = '0;
 endmodule
 
 

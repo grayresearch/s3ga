@@ -32,14 +32,15 @@
 // S3GA: simple scalable serial FPGA
 
 module s3ga #(
-    parameter N         = 128,          // N logical LUTs
-    parameter M         = 8,            // M contexts
+    parameter N         = 1024,         // N logical LUTs
+    parameter M         = 4,            // M contexts
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
-    parameter LB_IB     = 3,            // no. of LB input buffers
+    parameter LB_IB     = K,            // no. of LB input buffers
     parameter CFG_W     = 5,            // config I/O width
     parameter IO_I_W    = 32,           // parallel IO input  width
-    parameter IO_O_W    = 32            // parallel IO output width
+    parameter IO_O_W    = 32,           // parallel IO output width
+    parameter MACRO_N   = 0             // subcluster macro size (if non-zero)
 ) (
     input               clk,            // clock
     input               rst,            // sync reset -- > M+log4(N)+1 cycles please
@@ -50,7 +51,7 @@ module s3ga #(
     output `V(IO_O_W)   io_o            // parallel IO outputs
 );
     localparam LEVEL    = $clog2(N/M)/$clog2(B);
-    localparam UP_I_WS  = 07_07_16_32 / 100**(4-LEVEL) * 100; // up switch input widths
+    localparam UP_I_WS  = 08_08_18_36 / 100**(4-LEVEL) * 100; // up switch input widths
     localparam UP_O_WS  = 04_04_08_16 / 100**(4-LEVEL) * 100; // up switch output widths
 
     reg  `CNT(3)    cfg_st;             // state: 0: await cfgd; 1: await tock; 2: done
@@ -91,9 +92,48 @@ module s3ga #(
 
     cluster #(.N(N), .M(M), .B(B), .K(K), .LB_IB(LB_IB), .CFG_W(CFG_W),
               .IO_I_W(IO_I_W), .IO_O_W(IO_O_W),
-              .UP_I_WS(UP_I_WS), .UP_O_WS(UP_O_WS), .UP_O_DELAY(0), .ID(0))
+              .UP_I_WS(UP_I_WS), .UP_O_WS(UP_O_WS), .UP_O_DELAY(0),
+              .ID(0), .MACRO_N(MACRO_N))
         c(.clk, .rst(rst_), .grst, .m, .cfg(1'b1), .cfgd, .cfg_i(cfg_i_),
           .io_i, .io_o, .up_i('0), .up_o());
+endmodule
+
+
+module macro #(
+    parameter N         = 256,          // N logical LUTs
+    parameter M         = 4,            // M contexts
+    parameter B         = 4,            // subcluster branching factor
+    parameter K         = 4,            // K-input LUTs
+    parameter LB_IB     = K,            // no. of LB input buffers
+    parameter CFG_W     = 5,            // config I/O width
+    parameter IO_I_W    = 0,            // parallel IO input  width
+    parameter IO_O_W    = 0,            // parallel IO output width
+    parameter UP_I_WS   = 08_08_18_36,  // up switch serial input  widths
+    parameter UP_O_WS   = 04_04_08_16,  // up switch serial output widths
+    parameter UP_O_DELAY = 1,           // default up_o delay
+    parameter ID        = 0,            // cluster identifier ::= ID of its first LB
+
+    localparam UP_I_W   = UP_I_WS%100,  // up switch serial input  width
+    localparam UP_O_W   = UP_O_WS%100,  // up switch serial output width
+    localparam DN_I_W   = UP_O_WS/100%100, // down switches' serial input  width
+    localparam DN_O_W   = UP_I_WS/100%100  // down switches' serial output width
+) (
+    input               clk,            // clock
+    input               rst,            // sync reset
+    input               grst,           // S3GA configuration in progress
+    input  `CNT(M)      m,              // cycle % M
+    input               cfg,            // config enable
+    output              cfgd,           // cluster is configured
+    input  `V(CFG_W)    cfg_i,          // config input
+    input  `V(IO_I_W)   io_i,           // parallel IO inputs
+    output `V(IO_O_W)   io_o,           // parallel IO outputs
+    input  `V(UP_I_W)   up_i,           // up switch serial inputs
+    output `V(UP_O_W)   up_o            // up switch serial outputs
+);
+    cluster #(.N(N), .M(M), .B(B), .K(K), .LB_IB(LB_IB), .CFG_W(CFG_W),
+              .IO_I_W(IO_I_W), .IO_O_W(IO_O_W),
+              .UP_I_WS(UP_I_WS), .UP_O_WS(UP_O_WS), .UP_O_DELAY(1), .ID(1), .MACRO_N(0))
+        c(.clk, .rst, .grst, .m, .cfg, .cfgd, .cfg_i, .io_i, .io_o, .up_i, .up_o);
 endmodule
 
 
@@ -104,14 +144,15 @@ module cluster #(
     parameter M         = 8,            // M contexts
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
-    parameter LB_IB     = 3,            // no. of LB input buffers
+    parameter LB_IB     = K,            // no. of LB input buffers
     parameter CFG_W     = 5,            // config I/O width
     parameter IO_I_W    = 0,           // parallel IO input  width
     parameter IO_O_W    = 0,           // parallel IO output width
-    parameter UP_I_WS   = 07_07,       // up switch serial input  widths
+    parameter UP_I_WS   = 08_08,       // up switch serial input  widths
     parameter UP_O_WS   = 04_04,       // up switch serial output widths
-    parameter UP_O_DELAY = 1,           // default up_o delay
+    parameter UP_O_DELAY = 0,           // default up_o delay
     parameter ID        = 0,            // cluster identifier ::= ID of its first LB
+    parameter MACRO_N   = 0,            // subcluster macro size (if non-zero)
 
     localparam UP_I_W   = UP_I_WS%100,  // up switch serial input  width
     localparam UP_O_W   = UP_O_WS%100,  // up switch serial output width
@@ -148,7 +189,10 @@ module cluster #(
 
     genvar i, j;
     generate
-    if (N == B*M && ID == 0 && IO_O_W > 0) begin : io
+    if (MACRO_N > 0 && N == MACRO_N) begin : mac
+        macro c(.clk, .rst, .grst, .m, .cfg, .cfgd, .cfg_i, .io_i, .io_o, .up_i, .up_o);
+    end
+    else if (N == B*M && ID == 0 && IO_O_W > 0) begin : io
         // first leaf cluster is the IO block
         iob #(.M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .I_W(UP_I_W), .O_W(UP_O_W))
             iob_(.clk, .rst(rst_q), .grst(grst_q), .m(m_q), .cfg, .cfgd, .cfg_i(cfg_i_q),
@@ -158,13 +202,11 @@ module cluster #(
         // s3ga<32> => { lb<8> lb<8> lb<8> lb<8> } directly, sans switch<32>
         wire `V(B)      halfs;          // half-LUT cascade chains, 0->1->2->3->0
         for (i = 0; i < B; i=i+1) begin : lbs
-            wire `V(B-1) peers;
-            for (j = 0; j < B-1; j=j+1)
-                assign peers[j] = up_o_[i + (j>=i)];
-            lb #(.M(M), .B(B), .K(K), .G(UP_I_W), .I(LB_IB), .CFG_W(CFG_W))
+            lb #(.M(M), .B(B), .K(K), .G(UP_I_W), .I(LB_IB), .CFG_W(CFG_W), .ID(ID+i))
                 lb_(.clk, .rst(rst_q), .grst(grst_q), .m(m_q),
                     .cfg(cfgs[i]), .cfgd(cfgs[i+1]), .cfg_i(cfg_i_q),
-                    .globs(up_i), .peers, .half_i(halfs[(i+B-1)%B]), .half_o(halfs[i]), .o(up_o_[i]));
+                    .globs(up_i), .locals(up_o_),
+                    .half_i(halfs[(i+B-1)%B]), .half_o(halfs[i]), .o(up_o_[i]));
         end
         assign cfgd = cfgs[B];
         assign io_o = '0;
@@ -308,12 +350,13 @@ endmodule
 // Configurable M-context logic block
 
 module lb #(
-    parameter M         = 8,            // M contexts
+    parameter M         = 4,            // M contexts
     parameter B         = 4,            // no. of peer LBs, including this one
     parameter K         = 4,            // K-input LUTs
-    parameter G         = 7,            // no. of global inputs
-    parameter I         = 3,            // no. of input buffers
-    parameter CFG_W     = 5             // config I/O width
+    parameter G         = 8,            // no. of global inputs
+    parameter I         = K,            // no. of input buffers
+    parameter CFG_W     = 5,            // config I/O width
+    parameter ID        = 0,            // unique ID (in system, or macro)
 ) (
     input               clk,
     input               rst,
@@ -322,25 +365,29 @@ module lb #(
     input               cfg,
     output              cfgd,
     input  `V(CFG_W)    cfg_i,
-    input  `V(G)        globs,          // global inputs
-    input  `V(B-1)      peers,          // serial outputs from peer LB8s in this X32 cluster
+    input  `V(G)        globs,          // global serial inputs
+    input  `V(B)        locals,         // local serial inputs (LBs in this cluster)
     input               half_i,         // half-LUT cascade in
     output `comb        half_o,         // half-LUT cascade out
     output `comb        o
 );
     // LB IMUXs
-    localparam LB_IN_W  = G+1;
+    localparam LB_IN_W  = G-1 + 1;      // each LB input selects G-1 of G globals and 1 local
     localparam LB_SEL_W = $clog2(LB_IN_W);
     `comb`V(LB_IN_W)    lb_ins;
     `comb`V(I)          imuxs;
 
     // input and output buffers
     reg  `NV(I,M)       ibufs;
-    reg  `V(M)          obuf;
     reg                 half_q;         // prev tick's half_lut output
 
+    // flip-flops
+    reg  `V(M)          qs;             // last M LUT outputs a.k.a. output flip-flops
+    reg                 ff_rst;         // flip-flops' reset
+    reg                 ff_ce;          // flip-flops' clock enable
+
     // LUT inputs, IMUXs, and outputs
-    localparam LUT_IN_W = I*M + M;
+    localparam LUT_IN_W = I*M;
     localparam LUT_SEL_W= $clog2(LUT_IN_W);
     `comb`V(LUT_IN_W)   ins;
     `comb`V(K)          idx;
@@ -351,35 +398,44 @@ module lb #(
     wire `NV(I,LB_SEL_W) lb_in_sels;    // logic block input selects
     wire `NV(K,LUT_SEL_W) lut_in_sels;  // LUT input selects
     wire `V(1<<K)       mask;           // LUT mask
-    wire                fd;             // D flip-flop?
+    wire                fd;             // D flip-flop
     wire                fds;            // D-FF reset value
-    wire                fde;            // D-FF clock enable?
+    wire                fde;            // D-FF clock enable
     cfg_ram #(.M(M), .W(LUT_W), .CFG_W(CFG_W))
-        luts(.clk, .rst, .m, .cfg, .cfgd, .cfg_i, .o({lb_in_sels,lut_in_sels,mask,fde,fds,fd}));
+        luts(.clk, .rst, .m, .cfg, .cfgd, .cfg_i, .o({fde,fds,fd,lb_in_sels,lut_in_sels,mask}));
 
     // LB input multiplexers
     integer i, j;
     always @* begin
         for (i = 0; i < I; i=i+1) begin
-            // ith LB input is one of G globals or the ith peer
-            lb_ins = {globs,peers[i]};
+            // ith LB input: any of G-1 of the global inputs, or 1 of the local inputs
+            lb_ins[0] = locals[i];
+            for (j = 0; j < G-1; j=j+1)
+                lb_ins[j+1] = globs[j + (j>=i)];
             imuxs[i] = lb_ins[lb_in_sels`at(i,LB_SEL_W)];
         end
     end
 
-    // LB input buffers and output buffer
+    // LB input buffers, output buffers, flip-flop nets
     always @(posedge clk) begin
         for (i = 0; i < I; i=i+1)
             ibufs`at(i,M) <= {ibufs`at(i,M),imuxs[i]};
-        obuf <= {obuf,lut};
+        qs <= {qs,o};                   // output flip-flops
         half_q <= (m == M-1) ? half_i : half_o;   // half-LUT cascade
+
+        // Obtain next M-cycle's flip-flops' RST and CE from the last global nets
+        // of the last cycle of this M-cycle. REVIEW: make this configurable?
+        if (m == M-1) begin
+            ff_rst <= grst | globs[G-1];
+            ff_ce  <= grst | globs[G-2];
+        end
     end
 
     // lookup table and "FDRE/FDSE flip-flop"
     always @* begin
         // LUT inputs
         for (i = 0; i < K; i=i+1) begin
-            ins = {ibufs,obuf};
+            ins = ibufs;
 
             // half-LUT cascade special inputs
             if (i == K-2)
@@ -394,17 +450,15 @@ module lb #(
         lut = ~grst & mask[idx];
         half_o = ~grst & mask[idx[K-2:0]];
 
-        o = lut;
-
-/*      TODO
-        // optional output register
-        if (!fd)
+        // optional output flip-flop:
+        if (!fd)                        // combinational?
             o = lut;
-        else if (rst)
-            o = fds;
-        else
-            o = (clk && (!fde || ce)) ? lut : obuf[N-1];
-*/
+        else if (ff_rst)                // reset?
+            o = fds;                    //  Q <= set/reset value
+        else if (!fde || ff_ce)         // flop enabled?
+            o = lut;                    //  Q <= D (so to speak)
+        else                            // flop not enabled
+            o = qs[M-1];                //  Q unchanged
     end
 endmodule
 

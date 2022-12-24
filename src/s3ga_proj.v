@@ -90,11 +90,12 @@ Configuration sequence, approx:
 */
 
 module s3ga_proj #(
-    parameter N         = 128,          // N logical LUTs
+    parameter N         = 1024,         // N logical LUTs
     parameter M         = 8,            // M contexts
     parameter CFG_W     = 5,            // config I/O width: {last,data[3:0]}
     parameter IO_I_W    = 32,           // parallel IO input  width
-    parameter IO_O_W    = 48            // parallel IO output width
+    parameter IO_O_W    = 48,           // parallel IO output width
+    parameter MACRO_N   = 256           // use a macro for each X256 and below
 ) (
 `ifdef USE_POWER_PINS
     inout vccd1,    // User area 1 1.8V supply
@@ -250,7 +251,7 @@ module s3ga_proj #(
         cfg_i = cfg_v ? {1'b1,cfg_data[0+:SEG_W]} : '0;
     end
 
-    s3ga #(.N(N), .M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W))
+    s3ga #(.N(N), .M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .MACRO_N(MACRO_N))
         s(.clk, .rst, .done, .tock, .cfg_i, .io_i, .io_o);
 
     // project IOs

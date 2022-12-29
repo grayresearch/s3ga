@@ -24,7 +24,7 @@ import random
 from s3ga import seg
 
 # xbar parameters
-M     = 8 # M contexts
+M     = 4 # M contexts
 DELAY = 1 # no. of output pipeline stages
 I_W   = 4 # input  width
 O_W   = 4 # output width 
@@ -35,8 +35,13 @@ SEL_W = (I_W-1).bit_length()
 SEGS  = M * O_W * SEL_W // SEG_W
 
 # M=8 different input permutations
-map = [ [0,0,0,0], [0,1,2,3], [3,2,1,0], [3,0,1,2],
+map8 = [ [0,0,0,0], [0,1,2,3], [3,2,1,0], [3,0,1,2],
         [1,2,3,0], [2,1,0,3], [1,2,1,2], [3,3,3,3] ] 
+
+# M=4 different input permutations
+map4 = [ [0,0,0,0], [0,1,2,3], [1,2,1,3], [3,0,1,2] ]
+
+map = map4 if M==4 else map8
 
 async def reset(dut):
     dut.rst.value = 1

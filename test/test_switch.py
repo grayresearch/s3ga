@@ -24,7 +24,7 @@ import random
 import s3ga
 
 # switch parameters (X128 switch)
-M = 8
+M = 4
 B = 4
 DELAY = 1
 UP_I_W = 12

@@ -26,7 +26,7 @@ import s3ga
 from s3ga import seg
 
 # IOB parameters (IOB32)
-M = 8
+M = 4
 CFG_W = 5
 IO_I_W = 16
 IO_O_W = 16

@@ -24,7 +24,7 @@ import math
 import random
 
 # cfg_ram parameters
-M = 8
+M = 4
 W = 11
 CFG_W = 5
 SEG_W = CFG_W-1

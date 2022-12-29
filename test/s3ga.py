@@ -56,11 +56,11 @@ class LB:
 
     # yield LB's configuration bitstream
     def cfg(self):
-        lb_in_w = self.G + 1
+        lb_in_w = self.G-1 + 1
         lb_sel_w = (lb_in_w-1).bit_length()
-        lut_in_w = self.I*self.M + self.M
+        lut_in_w = self.I*self.M
         lut_sel_w = (lut_in_w-1).bit_length()
-        lut_w = self.I*lb_sel_w + self.K*lut_sel_w + (1<<self.K) + 3
+        lut_w = 3 + self.I*lb_sel_w + self.K*lut_sel_w + (1<<self.K)
         segs = math.ceil(lut_w/self.SEG_W)
 
         for s in range(segs):
@@ -73,9 +73,8 @@ class LB:
                     if idx < 0:     # special input half_q/1?
                         idx = lut_in_w-1
                     f |= idx << ((1<<self.K) + k*lut_sel_w) 
-                # LB input mux selects not yet implemented, currently zero
+                # LB input mux selects not yet implemented, selects LB input 0 == LB output
                 # 3 FDRE control bits not yet implemented
-                f = f << 3
                 yield (1<<self.SEG_W) | seg(f, s, self.SEG_W)
 
     def eval(self):

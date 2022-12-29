@@ -24,12 +24,12 @@ import math
 import random
 import s3ga
 
-# lb parameters (LB8)
-M = 8
+# lb parameters (LB)
+M = 4
 B = 4
 K = 4
-G = 7
-I = 3
+G = 8
+I = 4
 CFG_W = 5
 
 # some 4-LUTs and 3,3-LUTs (where input #3=sel)
@@ -52,7 +52,7 @@ def xor3(a,b,c,_):
     return a^b^c
 
 # xor(6b counter)
-inc_xor_luts = [
+inc_xor_luts_m8 = [
     [  0, 0,-1,-1, inc0 ],
     [  1, 0,-1,-1, inc  ],
     [  2, 0,-1,-1, inc  ],
@@ -61,6 +61,13 @@ inc_xor_luts = [
     [  5, 0,-1,-1, inc  ],
     [  0, 1, 2, 3, xor4 ],
     [  4, 5, 6,-1, xor3 ]
+]
+
+inc_xor_luts_m4 = [
+    [  0, 0,-1,-1, inc0 ],
+    [  1, 0,-1,-1, inc  ],
+    [  2, 0,-1,-1, inc  ],
+    [  0, 1, 2, 0, xor3 ]
 ]
 
 async def reset(dut):
@@ -80,7 +87,7 @@ async def m_counter(dut):
 
 @cocotb.test()
 async def test_lb(dut):
-    lb = s3ga.LB(M, B, K, G, I, CFG_W, inc_xor_luts)
+    lb = s3ga.LB(M, B, K, G, I, CFG_W, inc_xor_luts_m4)
 
     clock = Clock(dut.clk, 10, units="ns")
     cocotb.fork(clock.start())
@@ -89,7 +96,7 @@ async def test_lb(dut):
     dut.cfg.value = 1
     dut.cfg_i.value = 0
     dut.globs.value = 0
-    dut.peers.value = 0
+    dut.locals.value = 0
     dut.half_i.value = 0
     await reset(dut)
     assert dut.cfgd.value == 0
@@ -117,11 +124,12 @@ async def test_lb(dut):
     dut.grst.value = 0
 
     # test the counter / xor results
-    for i in range(1,64):
+    for i in range(1,(8 if M==4 else 64)):
         o = 0
         for m in range(M):
+            dut.locals.value = dut.o.value
             await FallingEdge(dut.clk)
-            if m < 6:
+            if m < (3 if M==4 else 6):
                 o |= (dut.o.value << m)
         assert o == i
         assert xor_reduce(i) == dut.o.value

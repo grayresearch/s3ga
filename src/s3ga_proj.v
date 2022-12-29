@@ -90,8 +90,8 @@ Configuration sequence, approx:
 */
 
 module s3ga_proj #(
-    parameter N         = 1024,         // N logical LUTs
-    parameter M         = 8,            // M contexts
+    parameter N         = 256,          // N logical LUTs
+    parameter M         = 4,            // M contexts
     parameter CFG_W     = 5,            // config I/O width: {last,data[3:0]}
     parameter IO_I_W    = 32,           // parallel IO input  width
     parameter IO_O_W    = 48,           // parallel IO output width

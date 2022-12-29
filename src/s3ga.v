@@ -356,7 +356,7 @@ module lb #(
     parameter G         = 8,            // no. of global inputs
     parameter I         = K,            // no. of input buffers
     parameter CFG_W     = 5,            // config I/O width
-    parameter ID        = 0,            // unique ID (in system, or macro)
+    parameter ID        = 0             // unique ID (in system, or macro)
 ) (
     input               clk,
     input               rst,

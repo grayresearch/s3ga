@@ -18,54 +18,70 @@
 // SPDX-License-Identifier: Apache-2.0
 
 `default_nettype none
+
+`include "s3ga.h"
+
 `ifndef MPRJ_IO_PADS
 `include "defines.h"
 `endif
 
 /*
-S3GA interface
+Caravel S3GA interface
 
-S3GA is configured over the Wishbone bus. Once configured, S3GA may be
-use IOs via Wishbone CSRs, or external IO pads io_in and io_out, or
-via the logic analyzer IOs.
+Out of a preponderance of caution, the interface of last resort is the
+the logic analyzer. S3GA may be configured by the logic analyzer or over
+the Wishbone bus. Once configured, S3GA may use IOs via Wishbone CSRs,
+MPRJ IOs, or logic analyzer IOs.
+
+Logic analyzer signals
+Name        Dir Bits    Description
+-----------------------------------
+la_ctl      in  7:0
+  .clk_sel  in  1:0     S3GA clk select: 0:wb_clk_i 1:la_clk 2:io_clk 3:user_clock2 !!
+  .i_sel    in  3:2     S3GA io_i[31: 0] input select: 0:s3_in0 1:s3_in0 2:la_in  3:io_in   !!
+                        S3GA io_i[63:32] input select: 0:s3_in1 1:io_in  2:s3_in0 3:la_in when IO_I_W>32
+  .clk      in  4       S3GA clock when la.clk_sel==0; la_* inputs sampled on 0=>1 transition
+  .rst      in  5       S3GA reset
+  .cfg      in  6       S3GA cfg CE: send la_in as a config data frame
+  .oem      in  7       S3GA output enable mask CE: oem <= la_in (MPRJ output enable mask)
+--          --  15:8    --
+la_status   out 23:16
+  .rst_busy out 16      S3GA reset busy
+  .cfg_busy out 17      S3GA config data frame busy
+  .done     out 18      S3GA fully configured, up and running
+  --        --  23:19   --
+--          --  31:24   --
+la_in       in  63:32   la_in => config data frame when la_ctl.cfg on posedge clk
+                        la_in => oem when la_ctl.oem on posedge clk
+                        la_in => S3GA io_i[31: 0] when i_sel==
+                        la_in => S3GA io_i[63:32] when
+la_io_out0  out 95:64   la_io_out0 <= S3GA io_o[31:0]
+la_io_out1  out 127:96  la_io_out1 <= S3GA io_o[63:32]
 
 Wishbone CSRs
 Name        Addr    RW      Description
 ---------------------------------------
-s3ctl       0x0     RW      S3GA control register
- .reset     [0]      W        write 1: reset S3GA (but not other WB CSRs)
+s3_ctl      0x0     RW      S3GA control register
+ .rst       [0]      W        write 1: reset S3GA (but not other WB CSRs)
                     R         1 => reset busy
  .cfg_done  [1]     R         1 => S3GA fully configured
- .overrun   [3]     R         1 => write during reset busy or config busy
- .clk_sel   [5:4]   RW        S3GA clk is
-                                0 => WB wbs_clk_i
-                                1 => IO io_in[35]
-                                2 => LA la_data_in[64]
-                                // TBD: 3 => single step
- .rst_sel   [7:6]   RW        S3GA rst is
-                                0 => WB CSR s3ctl.reset
-                                1 => IO io_in[34]
-                                2 => LA la_data_in[65]
- .io_sel    [9:8]   RW        S3GA io_i is
-                                0 => WB s3_in
-                                1 => IO io_in
-                                2 => LA la_data_in
-s3cfg       0x4      W      S3GA configuration register: write config data
+s3_cfg      0x4      W      S3GA configuration register: write config data
                     R       1 => config data busy
-s3oem       0x8     RW      S3GA output enable mask
-s3in        0x10    RW      S3GA input register [31:0]
-s3out0      0x20    R       S3GA output register [31:0]
-s3out1      0x24    R       S3GA output register [47:32]
+s3_oem      0x8     RW      S3GA output enable mask
+s3_in0      0x10    RW      S3GA input  register => io_i[31:0] / io_i[63:32]   per la_ctl.i_sel
+s3_in1      0x14    RW      S3GA input  register => io_i[63:32] when IO_I_W>32 per la_ctl.i_sel
+s3_out0     0x20    R       S3GA output register <= io_o[31: 0]
+s3_out1     0x24    R       S3GA output register <= io_o[63:32] when IO_O_W>32
 
-Logic analyzer (when s3ctl.*_sel=2)
-Name        Dir Bits        Description
----------------------------------------
-la_io_i     in  [31:0]      S3GA io_i[31:0]
-la_clk      in  [32]        S3GA clk
-la_rst      in  [33]        S3GA rst
-la_io_o     out [111:64]    S3GA io_o[47:0]
+MPRJ I/O Signals
+Name        Dir Pins    Description
+-----------------------------------
+io_clk      in  35      external S3GA fabric clock input
+io_in       in  34:8    external inputs  => S3GA io_i per la_ctl.i_sel
+io_out      out 34:8    external outputs <= S3GA io_o[25:0]
+io_oeb      out 34:8    io_oeb[i] = ~(oem[(i-8)] & S3GA io_o[26+(i-8)/4] "approx" )
 
-Configuration sequence, approx:
+Wishbone configuration sequence, approx:
     ; init pointers
         la a0,s3ga      ; CSRs base
         la a1,cfg_data
@@ -87,192 +103,294 @@ Configuration sequence, approx:
     4:  lw a3,0(a0)
         bne a3,a4,4b
     ; S3GA is up and running
+
+LA configuration sequence, approx:
+    config() {
+        LA* la;
+        la->ctl = 0;
+        la->io_oes = 0;
+        la->io_in = 0;
+
+        la->ctl = '{ clk=0; rst=1; others=0; };
+        la->ctl = '{ clk=1; rst=1; others=0; };
+        la->ctl = '{ clk=0; others=0; };
+
+        do { clock(); } while (la->status.rst_busy);
+
+        for (uint32* pcfg = pcfg_base; pcfg < pcfg_end; ++pcfg) {
+            la->cfg_data = *pcfg;
+            la->ctl = '{ clk=0; cfg=1; others=0; }
+            la->ctl = '{ clk=1; cfg=1; others=0; }
+            la->ctl = '{ clk=0; others=0; }
+            do { clock(); } while (la->status.cfg_busy);
+        }
+
+        do { clock(); } while (!la->status.cfgd);
+        // up and running
+    }
+    clock() {
+        la->ctl = '{ clk=1; others=0; };
+        la->ctl = '{ clk=0; others=0; };
+    }
 */
 
 module s3ga_proj #(
-    parameter N         = 256,          // N logical LUTs
+    parameter N         = 64,           // N logical LUTs
     parameter M         = 4,            // M contexts
     parameter CFG_W     = 5,            // config I/O width: {last,data[3:0]}
-    parameter IO_I_W    = 32,           // parallel IO input  width
-    parameter IO_O_W    = 48,           // parallel IO output width
-    parameter MACRO_N   = 256           // use a macro for each X256 and below
+    parameter IO_I_W    = 16,           // parallel IO input  width
+    parameter IO_O_W    = 16,           // parallel IO output width
+    parameter MACRO_N   = 0             // use a macro for each X256 and below
 ) (
 `ifdef USE_POWER_PINS
-    inout vccd1,    // User area 1 1.8V supply
-    inout vssd1,    // User area 1 digital ground
+    inout  vccd1,   // User area 1 1.8V supply
+    inout  vssd1,   // User area 1 digital ground
 `endif
-
-    // Wishbone target ports (WB MI A)
-    input wb_clk_i,
-    input wb_rst_i,
-    input wbs_stb_i,
-    input wbs_cyc_i,
-    input wbs_we_i,
-    input [3:0] wbs_sel_i,
-    input [31:0] wbs_dat_i,
-    input [31:0] wbs_adr_i,
-    output `comb wbs_ack_o,
-    output `comb [31:0] wbs_dat_o,
-
+    // Wishbone
+    input  wb_clk_i,
+    input  wb_rst_i,
+    input  wbs_stb_i,
+    input  wbs_cyc_i,
+    input  wbs_we_i,
+    input  [3:0] wbs_sel_i,
+    input  [31:0] wbs_dat_i,
+    input  [31:0] wbs_adr_i,
+    output reg wbs_ack_o,
+    output reg [31:0] wbs_dat_o,
     // logic analyzer
     input  [127:0] la_data_in,
-    output [127:0] la_data_out,
+    output `comb [127:0] la_data_out,
     input  [127:0] la_oenb,
-
     // IOs
     input  [`MPRJ_IO_PADS-1:0] io_in,
-    output [`MPRJ_IO_PADS-1:0] io_out,
-    output [`MPRJ_IO_PADS-1:0] io_oeb,
-
-    // IRQ
-    output [2:0] user_irq
+    output `comb [`MPRJ_IO_PADS-1:0] io_out,
+    output `comb [`MPRJ_IO_PADS-1:0] io_oeb,
+    // other
+    input  user_clock2,
+    output `comb [2:0] user_irq
 );
-    // CSR address lsbs
-    localparam [5:0] s3ctl  = 6'h00;
-    localparam [5:0] s3cfg  = 6'h04;
-    localparam [5:0] s3oem  = 6'h08;
-    localparam [5:0] s3in_  = 6'h10;
-    localparam [5:0] s3out0 = 6'h20;
-    localparam [5:0] s3out1 = 6'h24;
-    localparam IO_MIN       = 8;        // only use IOs in [IO_MIN,IO_MAX);
-    localparam IO_MAX       = 36;       // i.e. avoid IOs[37,36,7:0]
-    localparam SEG_W        = CFG_W-1;  // config data segment width
+    ///////////////////////////////////////////////////////////////////////////
+    // signals and state
 
-    // Wishbone interface, CSRs
+    // S3GA inputs
+    `comb clk;                          // clock input mux
+    `comb use_wb_clk;                   // la_ctl.clk_sel == 0: use wb_clk_i
+    `comb use_la_clk;                   // la_ctl.clk_sel == 1: use la_clk
+    `comb `V(IO_I_W) io_i;               // S3GA IO inputs
+    `comb `V(CFG_W) cfg_i;              // S3GA config segment
+
+    // S3GA outputs
+    wire done;                          // S3GA full config complete, up and running
+    wire tock;                          // S3GA M-cycle ends: last tick
+    wire `V(IO_O_W) io_o;               // S3GA IO out
+
+    // reset and config FSMs
+    localparam SEGS = 32/M;
+    reg tick;                           // S3GA M-cycle begins: first tick
     reg `CNT(2*M+1) rst_cnt;            // S3GA reset counter in [0,2*M]
-    reg `CNT(M+1) cfg_cnt;              // S3GA config counter in [0,M]
-    reg overrun;                        // s3ctl[3]
-    reg `CNT(4) clk_sel;                // s3ctl[5:4]
-    reg `CNT(4) rst_sel;                // s3ctl[7:6]
-    reg `CNT(4) io_sel;                 // s3ctl[9:8]
-    reg `V(32) cfg_data;                // s3cfg CSR: 32b config data loadable shift reg
-    reg `V(32) oem;                     // s3oem: io_out output enable S3 outputs mask
-    reg `V(IO_I_W) s3in;                // s3in CSR
-    reg `V(IO_O_W-32) s3out1_;          // snapshot of second half of outputs
-    `comb wbs_v;                        // valid WB request
+    reg `CNT(SEGS+1) cfg_cnt;           // S3GA config counter in [0,SEGS]
+    reg `V(M*SEG_W) cfg_data;           // config data frame shift register
+    `comb rst;                          // S3GA reset request
     `comb rst_busy;                     // S3GA reset busy
     `comb cfg_busy;                     // S3GA send config data busy
     `comb cfg_v;                        // S3GA config segment valid
 
-    // S3GA signals
-    wire done;                          // S3GA full config complete, up and running
-    wire tock;                          // S3GA M-cycle ends: last tick
-    reg  tick;                          // S3GA M-cycle begins: first tick
-    wire `V(IO_O_W) io_o;               // S3GA IO out
+    // logic analyzer interface         // see top of file block comment
+    `comb `CNT(4) la_clk_sel;
+    `comb `CNT(4) la_i_sel;
+    `comb la_clk;
+    `comb la_rst;
+    `comb la_cfg;
+    `comb la_oem;
+    `comb `V(32) la_in;
+
+    // Wishbone CSRs                    // see top of file block comment
+    localparam [5:0] s3_ctl  = 6'h00;
+    localparam [5:0] s3_cfg  = 6'h04;
+    localparam [5:0] s3_oem  = 6'h08;
+    localparam [5:0] s3_in0  = 6'h10;
+    localparam [5:0] s3_in1  = 6'h14;
+    localparam [5:0] s3_out0 = 6'h20;
+    localparam [5:0] s3_out1 = 6'h24;
+    reg `V(IO_I_W) s3_in;               // s3_in CSR(s)
+    reg `V(IO_O_W-32) s3_out1_q;        // s3_out CSR(s)
+    `comb wb_req;                       // WB read/write request: first cycle of WB transaction
+    `comb wb_write;                     // valid WB write
+    `comb wb_rst;                       // WB write to s3_ctl.rst=1
+    `comb wb_cfg;                       // WB write to s3_cfg
+    `comb wb_oem;                       // WB write to s3_oem
+
+    // MPRJ IOs
+    localparam MPRJ_IO_MIN  = 8;        // only use IOs in [MPRJ_IO_MIN,MPRJ_IO_MAX);
+    localparam MPRJ_IO_MAX  = 36;       // i.e. avoid IOs[37,36,7:0]
+    localparam MPRJ_IO_W    = MPRJ_IO_MAX - MPRJ_IO_MIN;
+    localparam SEG_W        = CFG_W-1;  // config data segment width
+    wire io_clk = io_in[MPRJ_IO_MAX-1]; // MPRJ S3GA clock input
+
+    // other state
+    reg `V(MPRJ_IO_W) oem = 0;          // MPRJ io_oeb mask ([i] => oeb[MPRJ_IO_MIN+i] enabled)
+
+    ///////////////////////////////////////////////////////////////////////////
+    // Clock, reset, config FSMs -- see top of file block comment
+    //
+    // State here can be managed by logic analyzer or Wishbone interfaces,
+    // so take care to sample requests per current la_clk_sel.
 
     always @* begin
-        // Wishbone: asserts cyc and stb, in the same cycle, target responds
-        // (read:) with ack and read data, or
-        // (write:) latches WB write data inputs on posedge clk
-        //
-        // WB: 3.10: "If the SLAVE guarantees it can keep pace with all MASTER interfaces
-        // and if the [ERR_I] and [RTY_I] signals are not used, then the SLAVE’s [ACK_O]
-        // signal MAY be tied to the logical AND of the SLAVE’s [STB_I] and [CYC_I] inputs.
-        // The interface will function normally under these circumstances."
-        wbs_ack_o = wbs_cyc_i && wbs_stb_i;
-
-        // CSR reads
-        case (wbs_adr_i[5:0])
-        s3ctl:  wbs_dat_o = {io_sel,rst_sel,clk_sel,overrun,1'b0,done,rst_busy};
-        s3cfg:  wbs_dat_o = cfg_busy;
-        s3oem:  wbs_dat_o = oem;
-        s3in_:  wbs_dat_o = s3in;
-        s3out0: wbs_dat_o = io_o;
-        s3out1: wbs_dat_o = s3out1_;
-        default:wbs_dat_o = '0;
+        use_wb_clk = la_clk_sel == 2'd0;
+        use_la_clk = la_clk_sel == 2'd1;
+        case (la_clk_sel)
+        default: clk = wb_clk_i;
+        2'd1:    clk = la_clk;
+        2'd2:    clk = io_clk;
+        2'd3:    clk = user_clock2;
         endcase
 
-        // S3GA state machines for reset, and to transfer one config word
+        // S3GA reset *request*
+        rst = wb_rst_i || (use_wb_clk && wb_rst) || (use_la_clk && la_rst);
+
+        // S3GA state machines for reset, and to transfer one config data frame
         // as M segments in M contiguous beats, starting after a tock
         rst_busy = rst_cnt != 2*M;      // reset busy until its terminal count 
-        cfg_busy = cfg_cnt != M;        // config send busy until its TC
+        cfg_busy = cfg_cnt != SEGS;     // config send busy until its TC
         cfg_v    = cfg_busy && (cfg_cnt != 0 || tick);  // sync cfg_v to start of M-cycle
+        cfg_i    = cfg_v ? {1'b1,cfg_data[0+:SEG_W]} : 0;
     end
-    always @(posedge wb_clk_i) begin
+    always @(posedge clk) begin
         tick <= tock;
-        if (wb_rst_i) begin
-            rst_cnt <= '0;              // start reset counter
-            cfg_cnt <= M;               // end config counter
-            overrun <= 0;
-            clk_sel <= '0;
-            rst_sel <= '0;
-            io_sel <= '0;
-            cfg_data <= '0;
-            oem <= '0;
-            s3in <= '0;
+        if (rst) begin
+            rst_cnt <= 0;               // start reset counter
+            cfg_cnt <= SEGS;            // end config counter
+            cfg_data <= 0;
+            oem <= 0;
         end
         else begin
-            // reset, config
             if (rst_busy)
                 rst_cnt <= rst_cnt + 1'b1;
+
             if (cfg_v) begin
-                cfg_cnt <= cfg_cnt + 1;
+                // send another config data segment
+                cfg_cnt  <= cfg_cnt + 1'b1;
                 cfg_data <= cfg_data >> SEG_W;
             end
-
-            // CSR writes (must follow above)
-            if (wbs_ack_o && wbs_we_i && &wbs_sel_i[3:0]) begin
-                case (wbs_adr_i[5:0])
-                s3ctl: begin
-                    if (wbs_dat_i[0])
-                        rst_cnt <= '0;
-                    {io_sel,rst_sel,clk_sel,overrun} <= wbs_dat_i[9:3];
-                end
-                s3cfg: begin cfg_data <= wbs_dat_i; cfg_cnt <= '0; end
-                s3oem: oem <= wbs_dat_i;
-                s3in_: s3in <= wbs_dat_i;
-                default:;
-                endcase
-                if (rst_busy || cfg_busy)
-                    overrun <= 1;       // tsk
+            else if (use_wb_clk && wb_cfg || use_la_clk && la_cfg) begin
+                // start send config data frame: register config data frame
+                cfg_cnt  <= 0;
+                cfg_data <= la_cfg ? la_in : wbs_dat_i;
             end
-            // when reading s3out0, snapshot s3out1 read response too, so that
-            // the two are synchronized when sequentially read by software
-            if (wbs_ack_o && !wbs_we_i && wbs_adr_i[5:0] == s3out0)
-                s3out1_ <= io_o >> 32;
+
+            if (use_wb_clk && wb_oem || use_la_clk && la_oem)
+                oem <= la_oem ? la_in : wbs_dat_i;
         end
     end
 
-    // S3GA inputs from WB CSRs, project inputs, or LA inputs
-    `comb clk;
-    `comb rst;
-    `comb `V(IO_I_W) io_i;
-    `comb `V(CFG_W) cfg_i;
 
+    ///////////////////////////////////////////////////////////////////////////
+    // Logic analyzer interface
+
+    // inputs [15:0] and [63:32]
     always @* begin
-        clk = clk_sel==2'd1 ? io_in[IO_MAX-1] : clk_sel==2'd2 ? la_data_in[32] : wb_clk_i;
-        rst = rst_sel==2'd1 ? io_in[IO_MAX-2] : rst_sel==2'd2 ? la_data_in[33] : rst_busy;
-        case (io_sel)
-        default:io_i = s3in;
-        2'd1:   io_i = io_in[IO_MAX-1:IO_MIN];
-        2'd2:   io_i = la_data_in[IO_I_W-1:0];
-        endcase
+        {la_oem,la_cfg,la_rst,la_clk,la_i_sel,la_clk_sel} = la_data_in[7:0];
+        la_in = la_data_in[63:32];
 
-        cfg_i = cfg_v ? {1'b1,cfg_data[0+:SEG_W]} : '0;
+        // outputs [31:16] and [127:64]
+        la_data_out[15:0] = 0;
+        la_data_out[23:16] = {5'b0,done,cfg_busy,rst_busy};
+        la_data_out[63:24] = 0;
+        la_data_out[127:64] = io_o;
     end
 
+    ///////////////////////////////////////////////////////////////////////////
+    // Wishbone CSRs
+
+    // Wishbone: asserts cyc and stb; in response:
+    // (read:)  next cycle ack, with registered CSR read data output, or
+    // (write:) next cycle ack, and (this cycle) register CSR write data on posedge clk 
+    //
+    // REVIEW: previously, this FSM responded to the WB request in the same cycle, per
+    // WB: 3.10: "If the SLAVE guarantees it can keep pace with all MASTER interfaces
+    // and if the [ERR_I] and [RTY_I] signals are not used, then the SLAVE’s [ACK_O]
+    // signal MAY be tied to the logical AND of the SLAVE’s [STB_I] and [CYC_I] inputs.
+    // The interface will function normally under these circumstances."
+    // Out of caution, to be more like user_proj_example, and seeking more timing
+    // margin, replaced that with current logic,/ which acks, and drives read data,
+    // on the second clock cycle.
+
+    always @* begin
+        // Writes to CSRs [ s3_ctl, s3_cfg, s3_oem ] impact the interface's
+        // reset and config FSMs, and interact with logic analyzer outputs.
+        // These are handled above in the FSMs block of the module.
+        wb_req   = !wb_rst_i && wbs_cyc_i && wbs_stb_i && !wbs_ack_o/* first cycle of transaction*/;
+        wb_write = wb_req && wbs_we_i && &wbs_sel_i;
+        wb_rst   = wb_write && wbs_adr_i[5:0] == s3_ctl && wbs_dat_i[0];
+        wb_cfg   = wb_write && wbs_adr_i[5:0] == s3_cfg;
+        wb_oem   = wb_write && wbs_adr_i[5:0] == s3_oem;
+    end
+    always @(posedge wb_clk_i) begin
+        if (wb_rst_i) begin
+            wbs_ack_o <= 0;
+            wbs_dat_o <= 0;
+            s3_in <= 0;
+            s3_out1_q <= 0;
+        end
+        else if (wbs_ack_o) begin
+            wbs_ack_o <= 0;             // ack for one cycle
+        end
+        else if (wb_req) begin
+            wbs_ack_o <= 1;
+            if (wbs_we_i && &wbs_sel_i) begin
+                // CSR write
+                case (wbs_adr_i[5:0])
+                s3_in0: s3_in <= ((s3_in>>32) << 32) | wbs_dat_i;
+                s3_in1: s3_in <= (wbs_dat_i   << 32) | s3_in[0+:32];
+                default: ; // writes to s3_ctl, s3_cfg, s3_oem are handled above
+                endcase
+            end
+            else if (!wbs_we_i) begin
+                // CSR read
+                case (wbs_adr_i[5:0])
+                s3_ctl:  wbs_dat_o <= {done,rst_busy};
+                s3_cfg:  wbs_dat_o <= cfg_busy;
+                s3_oem:  wbs_dat_o <= oem;
+                s3_in0:  wbs_dat_o <= s3_in;
+                s3_in1:  wbs_dat_o <= s3_in >> 32;
+                s3_out0: begin wbs_dat_o <= io_o; s3_out1_q <= io_o >> 32; end
+                s3_out1: wbs_dat_o <= s3_out1_q;
+                default: wbs_dat_o <= 0;
+                endcase
+            end
+        end
+    end
+
+    ///////////////////////////////////////////////////////////////////////////
+    // IOs
+    
+    `comb `V(32) io_in_32;
+    integer i;
+    always @* begin
+        // S3GA IO inputs
+        io_in_32 = io_in >> MPRJ_IO_MIN;
+        case (la_i_sel)
+        default: io_i = s3_in;
+        2'd1:    io_i = {io_in,s3_in[0+:32]};
+        2'd2:    io_i = {s3_in,la_in};
+        2'd3:    io_i = {la_in,io_in_32};
+        endcase
+
+        // MPRJ IO outputs
+        io_out = io_o << MPRJ_IO_MIN;
+        for (i = 0; i < `MPRJ_IO_PADS; i=i+1)
+            io_oeb[i] = rst || i < MPRJ_IO_MIN || i > MPRJ_IO_MAX-1-1/*io_clk*/
+                      || ~oem[i-MPRJ_IO_MIN] || ~io_o[MPRJ_IO_W+32 + (i-MPRJ_IO_MIN)/4];
+        // other
+        user_irq = 0;
+    end
+
+    ///////////////////////////////////////////////////////////////////////////
+    // S3GA instance
+
     s3ga #(.N(N), .M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .MACRO_N(MACRO_N))
-        s(.clk, .rst, .done, .tock, .cfg_i, .io_i, .io_o);
-
-    // project IOs
-    // output first 28 S3GA outputs on io_out[:8]
-    assign io_out = io_o << IO_MIN;
-    // output next 14 S3GA outputs, doubled, on io_oeb[:8] (under oem);
-    // thus S3GA can configurably dynamically tristate (pairs of) output wires
-    genvar i;
-    generate for (i = 0; i < `MPRJ_IO_PADS; i=i+1) begin : oebs
-        assign io_oeb[i] = rst           ? 1'b1
-                         : i < IO_MIN    ? 1'b0
-                         : i >= IO_MAX   ? 1'b0
-                         : oem[i-IO_MIN] ? io_o[IO_MAX-IO_MIN+(i-IO_MIN)/2]
-                         : 1'b0;
-    end endgenerate
-
-    // logic analyzer. REVIEW: bring out some debug signals
-    assign la_data_out = io_o << 64;
-
-    // other
-    assign user_irq = '0;
+        s(.clk, .rst(rst_busy), .done, .tock, .cfg_i, .io_i, .io_o);
 endmodule
 
 

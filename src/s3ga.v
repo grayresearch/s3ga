@@ -51,7 +51,7 @@ module s3ga #(
     output `V(IO_O_W)   io_o            // parallel IO outputs
 );
     localparam LEVEL    = $clog2(N/M)/$clog2(B);
-    localparam UP_I_WS  = 08_08_18_36 / 100**(4-LEVEL) * 100; // up switch input widths
+    localparam UP_I_WS  = 08_08_16_32 / 100**(4-LEVEL) * 100; // up switch input widths
     localparam UP_O_WS  = 04_04_08_16 / 100**(4-LEVEL) * 100; // up switch output widths
 
     reg  `CNT(3)    cfg_st;             // state: 0: await cfgd; 1: await tock; 2: done
@@ -63,8 +63,8 @@ module s3ga #(
     wire `V(CFG_W)  cfg_i_;             // delay-matched cfg_i
 
     always @(posedge clk) begin
-        m     <= rst ? '0 : m + 1'b1;
-        tock_ <= rst ? '0 : (m == M-2);
+        m     <= rst ? 0 : m + 1'b1;
+        tock_ <= rst ? 0 : (m == M-2);
 
         // align reset to next M-cycle
         if (rst)
@@ -95,7 +95,7 @@ module s3ga #(
               .UP_I_WS(UP_I_WS), .UP_O_WS(UP_O_WS), .UP_O_DELAY(0),
               .ID(0), .MACRO_N(MACRO_N))
         c(.clk, .rst(rst_), .grst, .m, .cfg(1'b1), .cfgd, .cfg_i(cfg_i_),
-          .io_i, .io_o, .up_i('0), .up_o());
+          .io_i, .io_o, .up_i(1'b0), .up_o());
 endmodule
 
 
@@ -108,15 +108,15 @@ module macro #(
     parameter CFG_W     = 5,            // config I/O width
     parameter IO_I_W    = 0,            // parallel IO input  width
     parameter IO_O_W    = 0,            // parallel IO output width
-    parameter UP_I_WS   = 08_08_18_36,  // up switch serial input  widths
+    parameter UP_I_WS   = 08_08_16_32,  // up switch serial input  widths
     parameter UP_O_WS   = 04_04_08_16,  // up switch serial output widths
     parameter UP_O_DELAY = 1,           // default up_o delay
     parameter ID        = 0,            // cluster identifier ::= ID of its first LB
 
-    localparam UP_I_W   = UP_I_WS%100,  // up switch serial input  width
-    localparam UP_O_W   = UP_O_WS%100,  // up switch serial output width
-    localparam DN_I_W   = UP_O_WS/100%100, // down switches' serial input  width
-    localparam DN_O_W   = UP_I_WS/100%100  // down switches' serial output width
+    parameter UP_I_W    = UP_I_WS%100,  // up switch serial input  width
+    parameter UP_O_W    = UP_O_WS%100,  // up switch serial output width
+    parameter DN_I_W    = UP_O_WS/100%100, // down switches' serial input  width
+    parameter DN_O_W    = UP_I_WS/100%100  // down switches' serial output width
 ) (
     input               clk,            // clock
     input               rst,            // sync reset
@@ -141,7 +141,7 @@ endmodule
 
 module cluster #(
     parameter N         = 32,           // N logical LUTs
-    parameter M         = 4,            // M contexts
+    parameter M         = 8,            // M contexts
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
     parameter LB_IB     = K,            // no. of LB input buffers
@@ -154,10 +154,10 @@ module cluster #(
     parameter ID        = 0,            // cluster identifier ::= ID of its first LB
     parameter MACRO_N   = 0,            // subcluster macro size (if non-zero)
 
-    localparam UP_I_W   = UP_I_WS%100,  // up switch serial input  width
-    localparam UP_O_W   = UP_O_WS%100,  // up switch serial output width
-    localparam DN_I_W   = UP_O_WS/100%100, // down switches' serial input  width
-    localparam DN_O_W   = UP_I_WS/100%100  // down switches' serial output width
+    parameter UP_I_W    = UP_I_WS%100,  // up switch serial input  width
+    parameter UP_O_W    = UP_O_WS%100,  // up switch serial output width
+    parameter DN_I_W    = UP_O_WS/100%100, // down switches' serial input  width
+    parameter DN_O_W    = UP_I_WS/100%100  // down switches' serial output width
 ) (
     input               clk,            // clock
     input               rst,            // sync reset
@@ -173,7 +173,7 @@ module cluster #(
 );
     localparam LEVEL    = $clog2(N/M)/$clog2(B);
 
-    wire `V(UP_O_W) up_o_;          // up switch serial output (pre-delay)
+    wire `V(UP_O_W) up_o_;              // up switch serial output (pre-delay)
 
     wire `V(B+1)    cfgs;               // local config enables
     assign cfgs[0] = cfg;
@@ -209,7 +209,7 @@ module cluster #(
                     .half_i(halfs[(i+B-1)%B]), .half_o(halfs[i]), .o(up_o_[i]));
         end
         assign cfgd = cfgs[B];
-        assign io_o = '0;
+        assign io_o = 0;
     end
     else begin : subs
         // recurse to B subclusters sized N/B
@@ -241,7 +241,7 @@ module cluster #(
         end
         // IO output, if any, is from first sub-cluster
         if (IO_O_W == 0)
-            assign io_o = '0;
+            assign io_o = 0;
         else
             assign io_o = io_os`at(0,IO_O_W);
     end
@@ -260,7 +260,7 @@ endmodule
 //          select one of the B's DN_I_W's inputs.
 
 module switch #(
-    parameter M         = 4,            // M contexts
+    parameter M         = 8,            // M contexts
     parameter B         = 4,            // no. of down switches (subcluster branch factor)
     parameter DELAY     = 1,            // no. of output pipeline stages 
     parameter UP_I_W    = 12,           // up switch (*) input  width  (*: 0 if none)
@@ -316,7 +316,7 @@ endmodule
 // Configurable M-context crossbar
 
 module xbar #(
-    parameter M         = 4,            // M contexts
+    parameter M         = 8,            // M contexts
     parameter DELAY     = 1,            // no. of output pipeline stages
     parameter I_W       = 4,            // input  width
     parameter O_W       = 4,            // output width 
@@ -469,7 +469,7 @@ endmodule
 // crossbar serial inputs into parallel outputs.
 
 module iob #(
-    parameter M         = 4,            // M contexts
+    parameter M         = 8,            // M contexts
     parameter CFG_W     = 5,            // config I/O width
     parameter IO_I_W    = 16,           // parallel IO input  width
     parameter IO_O_W    = 16,           // parallel IO output width
@@ -504,7 +504,7 @@ module iob #(
     wire `NV(IO_O_W,SEL_W)  sels;       // output selects
     wire `NV(IO_O_W,TICK_W) ticks;      // output ticks
     cfg_ram #(.M(1), .W(IO_O_W*(SEL_W+TICK_W)), .CFG_W(CFG_W))
-        sels_(.clk, .rst, .m('0), .cfg(cfg_), .cfgd, .cfg_i, .o({ticks,sels}));
+        sels_(.clk, .rst, .m(1'b0), .cfg(cfg_), .cfgd, .cfg_i, .o({ticks,sels}));
 
     // output muxes and flops: for each output bit, register some input net,
     // on some tick, accumulating them in io_o_ (cumulative prior) and
@@ -520,17 +520,17 @@ module iob #(
     // register IO inputs and outputs as next M-cycle starts
     always @(posedge clk) begin
         if (grst || m == M-1)
-            io_o_ <= '0;
+            io_o_ <= 0;
         else
             io_o_ <= io_o_nxt;
 
         if (grst)
-            io_i_q <= '0;
+            io_i_q <= 0;
         else if (m == M-1)
             io_i_q <= io_i;
 
         if (grst)
-            io_o <= '0;
+            io_o <= 0;
         else if (m == M-1)
             io_o <= io_o_nxt;
     end
@@ -550,7 +550,7 @@ endmodule
 //  000*, 1,[0][1:0], 1,[1][1:0], ..., 1,[7][1:0], 000*, 1,[0][3:2], 1,[1][3:2], ..., 1,[7][3:2]
 
 module cfg_ram #(
-    parameter M         = 4,            // M switch contexts
+    parameter M         = 8,            // M switch contexts
     parameter W         = 11,           // output width
     parameter CFG_W     = 5,            // config data I/O width: { valid:1; segment:4; }
     parameter USE_SR    = 1             // use shift register RAM
@@ -573,7 +573,7 @@ module cfg_ram #(
     always @(posedge clk) begin
         if (rst) begin                  // reset: start config, pass no config data
             cfgd <= 0;
-            seg <= '0;
+            seg <= 0;
         end
         else if (cfg_v) begin
             if (seg != CFG_SEGS-1)      // terminal count?
@@ -599,7 +599,7 @@ module cfg_ram #(
             if (cfg_v)                  // load a segment
                 ram_in[seg/M*SEG_W +: SEG_W] = cfg_i[0+:SEG_W]; // will clip when W%CFG_W != 0
             if (rst)
-                ram_in = {`SEGS(W,SEG_W){cfg_i[0+:SEG_W]}}; // = '0; -- saves area
+                ram_in = {`SEGS(W,SEG_W){cfg_i[0+:SEG_W]}}; // = 0; -- saves area
         end
         always @(posedge clk) begin
             for (i = 0; i < M; i=i+1)
@@ -611,7 +611,7 @@ module cfg_ram #(
         always @(posedge clk) begin
             if (rst) begin
                 for (i = 0; i < M; i=i+1)
-                    ram[i] <= '0;
+                    ram[i] <= 0;
             end
             else if (cfg_v)
                 ram[seg%M]`at(seg/M,SEG_W) <= cfg_i[0+:SEG_W];

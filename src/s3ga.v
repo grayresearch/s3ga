@@ -141,15 +141,15 @@ endmodule
 
 module cluster #(
     parameter N         = 32,           // N logical LUTs
-    parameter M         = 8,            // M contexts
+    parameter M         = 4,            // M contexts
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
     parameter LB_IB     = K,            // no. of LB input buffers
     parameter CFG_W     = 5,            // config I/O width
-    parameter IO_I_W    = 0,           // parallel IO input  width
-    parameter IO_O_W    = 0,           // parallel IO output width
-    parameter UP_I_WS   = 08_08,       // up switch serial input  widths
-    parameter UP_O_WS   = 04_04,       // up switch serial output widths
+    parameter IO_I_W    = 0,            // parallel IO input  width
+    parameter IO_O_W    = 0,            // parallel IO output width
+    parameter UP_I_WS   = 08_08,        // up switch serial input  widths
+    parameter UP_O_WS   = 04_04,        // up switch serial output widths
     parameter UP_O_DELAY = 0,           // default up_o delay
     parameter ID        = 0,            // cluster identifier ::= ID of its first LB
     parameter MACRO_N   = 0,            // subcluster macro size (if non-zero)
@@ -260,7 +260,7 @@ endmodule
 //          select one of the B's DN_I_W's inputs.
 
 module switch #(
-    parameter M         = 8,            // M contexts
+    parameter M         = 4,            // M contexts
     parameter B         = 4,            // no. of down switches (subcluster branch factor)
     parameter DELAY     = 1,            // no. of output pipeline stages 
     parameter UP_I_W    = 12,           // up switch (*) input  width  (*: 0 if none)
@@ -316,7 +316,7 @@ endmodule
 // Configurable M-context crossbar
 
 module xbar #(
-    parameter M         = 8,            // M contexts
+    parameter M         = 4,            // M contexts
     parameter DELAY     = 1,            // no. of output pipeline stages
     parameter I_W       = 4,            // input  width
     parameter O_W       = 4,            // output width 
@@ -469,7 +469,7 @@ endmodule
 // crossbar serial inputs into parallel outputs.
 
 module iob #(
-    parameter M         = 8,            // M contexts
+    parameter M         = 4,            // M contexts
     parameter CFG_W     = 5,            // config I/O width
     parameter IO_I_W    = 16,           // parallel IO input  width
     parameter IO_O_W    = 16,           // parallel IO output width
@@ -550,7 +550,7 @@ endmodule
 //  000*, 1,[0][1:0], 1,[1][1:0], ..., 1,[7][1:0], 000*, 1,[0][3:2], 1,[1][3:2], ..., 1,[7][3:2]
 
 module cfg_ram #(
-    parameter M         = 8,            // M switch contexts
+    parameter M         = 4,            // M switch contexts
     parameter W         = 11,           // output width
     parameter CFG_W     = 5,            // config data I/O width: { valid:1; segment:4; }
     parameter USE_SR    = 1             // use shift register RAM

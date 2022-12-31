@@ -100,7 +100,7 @@ endmodule
 
 
 module macro #(
-    parameter N         = 256,          // N logical LUTs
+    parameter N         = 64,           // N logical LUTs
     parameter M         = 4,            // M contexts
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
@@ -192,8 +192,7 @@ module cluster #(
     if (MACRO_N > 0 && N == MACRO_N) begin : mac
         macro c(.clk, .rst, .grst, .m, .cfg, .cfgd, .cfg_i, .io_i, .io_o, .up_i, .up_o);
     end
-    else if (N == B*M && ID == 0 && IO_O_W > 0) begin : io
-        // first leaf cluster is the IO block
+    else if (N == IO_O_W) begin : io
         iob #(.M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .I_W(UP_I_W), .O_W(UP_O_W))
             iob_(.clk, .rst(rst_q), .grst(grst_q), .m(m_q), .cfg, .cfgd, .cfg_i(cfg_i_q),
                  .io_i, .io_o, .i(up_i), .o(up_o_));
@@ -222,28 +221,29 @@ module cluster #(
 
         wire `NV(B,DN_I_W) dn_is;       // down switches' serial inputs
         wire `NV(B,DN_O_W) dn_os;       // down switches' serial outputs
-        localparam IO_X_W = `MAX(1,IO_O_W); // stupid Verilog 0-width bus handling
-        wire `NV(B,IO_X_W) io_os;       // sub-clusters' IO outputs
 
         switch #(.M(M), .B(B), .DELAY(1), .UP_I_W(UP_I_W), .UP_O_W(UP_O_W),
                  .DN_I_W(DN_I_W), .DN_O_W(DN_O_W), .CFG_W(CFG_W))
             sw(.clk, .rst(rst_qq), .m(m_qq), .cfg(cfgs[B]), .cfgd, .cfg_i(cfg_i_qq),
                .up_i, .up_o(up_o_), .dn_is, .dn_os);
 
-        for (i = 0; i < B; i=i+1) begin : cs
+        // first subcluster may have IO
+        cluster #(.N(N/B), .M(M), .B(B), .K(K), .LB_IB(LB_IB), .CFG_W(CFG_W),
+                  .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .UP_I_WS(UP_I_WS/100), .UP_O_WS(UP_O_WS/100),
+                  .UP_O_DELAY(0), .ID(ID))
+            c0(.clk, .rst(rst_q), .grst(grst_q), .m(m_q),
+               .cfg(cfgs[0]), .cfgd(cfgs[1]), .cfg_i(cfg_i_q), .io_i, .io_o,
+               .up_i(dn_os`at(0,DN_O_W)), .up_o(dn_is`at(0,DN_I_W)));
+
+        // other subclusters don't
+        for (i = 1; i < B; i=i+1) begin : cs
             cluster #(.N(N/B), .M(M), .B(B), .K(K), .LB_IB(LB_IB), .CFG_W(CFG_W),
-                      .IO_I_W(IO_I_W), .IO_O_W(IO_O_W),
-                      .UP_I_WS(UP_I_WS/100), .UP_O_WS(UP_O_WS/100), .UP_O_DELAY(0), .ID(ID+i*N/B))
+                      .IO_I_W(0), .IO_O_W(0), .UP_I_WS(UP_I_WS/100), .UP_O_WS(UP_O_WS/100),
+                      .UP_O_DELAY(0), .ID(ID+i*N/B))
                 c(.clk, .rst(rst_q), .grst(grst_q), .m(m_q),
-                  .cfg(cfgs[i]), .cfgd(cfgs[i+1]), .cfg_i(cfg_i_q),
-                  .io_i, .io_o(io_os`at(i,IO_X_W)),
+                  .cfg(cfgs[i]), .cfgd(cfgs[i+1]), .cfg_i(cfg_i_q), .io_i(1'b0), .io_o(),
                   .up_i(dn_os`at(i,DN_O_W)), .up_o(dn_is`at(i,DN_I_W)));
         end
-        // IO output, if any, is from first sub-cluster
-        if (IO_O_W == 0)
-            assign io_o = 0;
-        else
-            assign io_o = io_os`at(0,IO_O_W);
     end
     endgenerate
     pipe #(.W(UP_O_W), .DELAY(UP_O_DELAY)) up_o_pipe(.clk, .i(up_o_), .o(up_o));

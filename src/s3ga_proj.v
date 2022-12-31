@@ -108,8 +108,8 @@ LA configuration sequence, approx:
     config() {
         LA* la;
         la->ctl = 0;
-        la->io_oes = 0;
         la->io_in = 0;
+        la->oem = 0;
 
         la->ctl = '{ clk=0; rst=1; others=0; };
         la->ctl = '{ clk=1; rst=1; others=0; };
@@ -134,13 +134,14 @@ LA configuration sequence, approx:
     }
 */
 
+
 module s3ga_proj #(
-    parameter N         = 64,           // N logical LUTs
+    parameter N         = 256,           // N logical LUTs
     parameter M         = 4,            // M contexts
     parameter CFG_W     = 5,            // config I/O width: {last,data[3:0]}
-    parameter IO_I_W    = 16,           // parallel IO input  width
-    parameter IO_O_W    = 16,           // parallel IO output width
-    parameter MACRO_N   = 0             // use a macro for each X256 and below
+    parameter IO_I_W    = 64,           // parallel IO input  width
+    parameter IO_O_W    = 64,           // parallel IO output width
+    parameter MACRO_N   = 0             // reuse a macro for cluster<N=MACRO_N>
 ) (
 `ifdef USE_POWER_PINS
     inout  vccd1,   // User area 1 1.8V supply
@@ -185,12 +186,13 @@ module s3ga_proj #(
     wire `V(IO_O_W) io_o;               // S3GA IO out
 
     // reset and config FSMs
-    localparam SEGS = 32/M;
+    localparam SEG_W        = CFG_W-1;  // config data segment width
+    localparam SEGS         = 32/SEG_W; // no. of segments in a 32b config frame
     reg tick;                           // S3GA M-cycle begins: first tick
     reg `CNT(2*M+1) rst_cnt;            // S3GA reset counter in [0,2*M]
     reg `CNT(SEGS+1) cfg_cnt;           // S3GA config counter in [0,SEGS]
     reg `V(M*SEG_W) cfg_data;           // config data frame shift register
-    `comb rst;                          // S3GA reset request
+    `comb rst_req;                      // S3GA reset request
     `comb rst_busy;                     // S3GA reset busy
     `comb cfg_busy;                     // S3GA send config data busy
     `comb cfg_v;                        // S3GA config segment valid
@@ -212,7 +214,8 @@ module s3ga_proj #(
     localparam [5:0] s3_in1  = 6'h14;
     localparam [5:0] s3_out0 = 6'h20;
     localparam [5:0] s3_out1 = 6'h24;
-    reg `V(IO_I_W) s3_in;               // s3_in CSR(s)
+    localparam S3_IN_W = (IO_I_W>32) ? 64 : 32;
+    reg `V(S3_IN_W) s3_in;              // s3_in CSR(s)
     reg `V(IO_O_W-32) s3_out1_q;        // s3_out CSR(s)
     `comb wb_req;                       // WB read/write request: first cycle of WB transaction
     `comb wb_write;                     // valid WB write
@@ -224,22 +227,24 @@ module s3ga_proj #(
     localparam MPRJ_IO_MIN  = 8;        // only use IOs in [MPRJ_IO_MIN,MPRJ_IO_MAX);
     localparam MPRJ_IO_MAX  = 36;       // i.e. avoid IOs[37,36,7:0]
     localparam MPRJ_IO_W    = MPRJ_IO_MAX - MPRJ_IO_MIN;
-    localparam SEG_W        = CFG_W-1;  // config data segment width
     wire io_clk = io_in[MPRJ_IO_MAX-1]; // MPRJ S3GA clock input
 
     // other state
     reg `V(MPRJ_IO_W) oem = 0;          // MPRJ io_oeb mask ([i] => oeb[MPRJ_IO_MIN+i] enabled)
 
     ///////////////////////////////////////////////////////////////////////////
-    // Clock, reset, config FSMs -- see top of file block comment
+    // Clock mux and reset and config FSMs -- see top of file block comment
     //
     // State here can be managed by logic analyzer or Wishbone interfaces,
     // so take care to sample requests per current la_clk_sel.
 
+    reg `CNT(4) clk_sel;
+    always @(posedge wb_clk_i) clk_sel <= la_clk_sel; // REVIEW. Openlane STA hack
+
     always @* begin
-        use_wb_clk = la_clk_sel == 2'd0;
-        use_la_clk = la_clk_sel == 2'd1;
-        case (la_clk_sel)
+        use_wb_clk = clk_sel == 2'd0;
+        use_la_clk = clk_sel == 2'd1;
+        case (clk_sel)
         default: clk = wb_clk_i;
         2'd1:    clk = la_clk;
         2'd2:    clk = io_clk;
@@ -247,7 +252,7 @@ module s3ga_proj #(
         endcase
 
         // S3GA reset *request*
-        rst = wb_rst_i || (use_wb_clk && wb_rst) || (use_la_clk && la_rst);
+        rst_req = wb_rst_i || (use_wb_clk && wb_rst) || (use_la_clk && la_rst);
 
         // S3GA state machines for reset, and to transfer one config data frame
         // as M segments in M contiguous beats, starting after a tock
@@ -258,7 +263,7 @@ module s3ga_proj #(
     end
     always @(posedge clk) begin
         tick <= tock;
-        if (rst) begin
+        if (rst_req) begin
             rst_cnt <= 0;               // start reset counter
             cfg_cnt <= SEGS;            // end config counter
             cfg_data <= 0;
@@ -317,7 +322,7 @@ module s3ga_proj #(
     // on the second clock cycle.
 
     always @* begin
-        // Writes to CSRs [ s3_ctl, s3_cfg, s3_oem ] impact the interface's
+        // Writes to CSRs { s3_ctl, s3_cfg, s3_oem } impact the interface's
         // reset and config FSMs, and interact with logic analyzer outputs.
         // These are handled above in the FSMs block of the module.
         wb_req   = !wb_rst_i && wbs_cyc_i && wbs_stb_i && !wbs_ack_o/* first cycle of transaction*/;
@@ -341,8 +346,9 @@ module s3ga_proj #(
             if (wbs_we_i && &wbs_sel_i) begin
                 // CSR write
                 case (wbs_adr_i[5:0])
-                s3_in0: s3_in <= ((s3_in>>32) << 32) | wbs_dat_i;
-                s3_in1: s3_in <= (wbs_dat_i   << 32) | s3_in[0+:32];
+                // { s3_ctl, s3_cfg, s3_oem } writes are handled above
+                s3_in0: s3_in[0+:32] <= wbs_dat_i;
+                s3_in1: s3_in <= {wbs_dat_i,s3_in[0+:32]}; // S3_IN_W in [32,64]
                 default: ; // writes to s3_ctl, s3_cfg, s3_oem are handled above
                 endcase
             end
@@ -366,22 +372,25 @@ module s3ga_proj #(
     // IOs
     
     `comb `V(32) io_in_32;
-    integer i;
+    integer i, j;
     always @* begin
         // S3GA IO inputs
         io_in_32 = io_in >> MPRJ_IO_MIN;
         case (la_i_sel)
         default: io_i = s3_in;
         2'd1:    io_i = {io_in,s3_in[0+:32]};
-        2'd2:    io_i = {s3_in,la_in};
+        2'd2:    io_i = {s3_in[0+:32],la_in};
         2'd3:    io_i = {la_in,io_in_32};
         endcase
 
         // MPRJ IO outputs
-        io_out = io_o << MPRJ_IO_MIN;
-        for (i = 0; i < `MPRJ_IO_PADS; i=i+1)
-            io_oeb[i] = rst || i < MPRJ_IO_MIN || i > MPRJ_IO_MAX-1-1/*io_clk*/
-                      || ~oem[i-MPRJ_IO_MIN] || ~io_o[MPRJ_IO_W+32 + (i-MPRJ_IO_MIN)/4];
+        io_out = io_o << (MPRJ_IO_MIN + (IO_I_W==16 ? 16 : 0)); // if only 16b I/O, don't overlap them
+        io_oeb = {`MPRJ_IO_PADS{1'b1}}; // default to input
+        for (i = MPRJ_IO_MIN; i < MPRJ_IO_MAX; i=i+1) begin
+            // given enough S3GA IOs, the io_o msbs are per-nybble dynamic output enables
+            j = MPRJ_IO_W + (i-MPRJ_IO_MIN)/4;
+            io_oeb[i] = rst_busy || ~oem[i-MPRJ_IO_MIN] || (j<IO_O_W ? ~io_o[j] : 0);
+        end
         // other
         user_irq = 0;
     end
@@ -391,6 +400,46 @@ module s3ga_proj #(
 
     s3ga #(.N(N), .M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .MACRO_N(MACRO_N))
         s(.clk, .rst(rst_busy), .done, .tock, .cfg_i, .io_i, .io_o);
+endmodule
+
+
+module s3ga_1K_proj #(
+    parameter N         = 1024,         // N logical LUTs
+    parameter M         = 4,            // M contexts
+    parameter CFG_W     = 5,            // config I/O width: {last,data[3:0]}
+    parameter IO_I_W    = 64,           // parallel IO input  width
+    parameter IO_O_W    = 64,           // parallel IO output width
+    parameter MACRO_N   = 0             // reuse a macro for cluster<N=MACRO_N>
+) (
+`ifdef USE_POWER_PINS
+    inout  vccd1,   // User area 1 1.8V supply
+    inout  vssd1,   // User area 1 digital ground
+`endif
+    // Wishbone
+    input  wb_clk_i,
+    input  wb_rst_i,
+    input  wbs_stb_i,
+    input  wbs_cyc_i,
+    input  wbs_we_i,
+    input  [3:0] wbs_sel_i,
+    input  [31:0] wbs_dat_i,
+    input  [31:0] wbs_adr_i,
+    output reg wbs_ack_o,
+    output reg [31:0] wbs_dat_o,
+    // logic analyzer
+    input  [127:0] la_data_in,
+    output `comb [127:0] la_data_out,
+    input  [127:0] la_oenb,
+    // IOs
+    input  [`MPRJ_IO_PADS-1:0] io_in,
+    output `comb [`MPRJ_IO_PADS-1:0] io_out,
+    output `comb [`MPRJ_IO_PADS-1:0] io_oeb,
+    // other
+    input  user_clock2,
+    output `comb [2:0] user_irq
+);
+    s3ga_proj #(.N(N), .M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .MACRO_N(MACRO_N))
+        s(.*);
 endmodule
 
 

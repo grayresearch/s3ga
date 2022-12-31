@@ -156,8 +156,8 @@ module s3ga_proj #(
     input  [3:0] wbs_sel_i,
     input  [31:0] wbs_dat_i,
     input  [31:0] wbs_adr_i,
-    output reg wbs_ack_o,
-    output reg [31:0] wbs_dat_o,
+    output reg wbs_ack_o,               // @wb_clk_i
+    output reg [31:0] wbs_dat_o,        // @wb_clk_i
     // logic analyzer
     input  [127:0] la_data_in,
     output `comb [127:0] la_data_out,
@@ -177,8 +177,8 @@ module s3ga_proj #(
     `comb clk;                          // clock input mux
     `comb use_wb_clk;                   // la_ctl.clk_sel == 0: use wb_clk_i
     `comb use_la_clk;                   // la_ctl.clk_sel == 1: use la_clk
-    `comb `V(IO_I_W) io_i;               // S3GA IO inputs
-    `comb `V(CFG_W) cfg_i;              // S3GA config segment
+    reg `V(IO_I_W) io_i;                // S3GA IO inputs       @clk
+    `comb `V(CFG_W) cfg_i;              // S3GA config segment  @clk
 
     // S3GA outputs
     wire done;                          // S3GA full config complete, up and running
@@ -198,13 +198,13 @@ module s3ga_proj #(
     `comb cfg_v;                        // S3GA config segment valid
 
     // logic analyzer interface         // see top of file block comment
-    `comb `CNT(4) la_clk_sel;
-    `comb `CNT(4) la_i_sel;
-    `comb la_clk;
-    `comb la_rst;
-    `comb la_cfg;
-    `comb la_oem;
-    `comb `V(32) la_in;
+    reg `CNT(4) la_clk_sel;             // all la_* inputs @wb_clk_i alas
+    reg `CNT(4) la_i_sel;
+    reg la_clk;
+    reg la_rst;
+    reg la_cfg;
+    reg la_oem;
+    reg `V(32) la_in;
 
     // Wishbone CSRs                    // see top of file block comment
     localparam [5:0] s3_ctl  = 6'h00;
@@ -238,13 +238,10 @@ module s3ga_proj #(
     // State here can be managed by logic analyzer or Wishbone interfaces,
     // so take care to sample requests per current la_clk_sel.
 
-    reg `CNT(4) clk_sel;
-    always @(posedge wb_clk_i) clk_sel <= la_clk_sel; // REVIEW. Openlane STA hack
-
     always @* begin
         use_wb_clk = clk_sel == 2'd0;
         use_la_clk = clk_sel == 2'd1;
-        case (clk_sel)
+        case (la_clk_sel)
         default: clk = wb_clk_i;
         2'd1:    clk = la_clk;
         2'd2:    clk = io_clk;
@@ -293,11 +290,12 @@ module s3ga_proj #(
     ///////////////////////////////////////////////////////////////////////////
     // Logic analyzer interface
 
-    // inputs [15:0] and [63:32]
+    // inputs [15:0] and [63:32] -- registered to mitigate downstream hold violations
+    always @(posedge wb_clk_i) begin
+        {la_oem,la_cfg,la_rst,la_clk,la_i_sel,la_clk_sel} <= la_data_in[7:0];
+        la_in <= la_data_in[63:32];
+    end
     always @* begin
-        {la_oem,la_cfg,la_rst,la_clk,la_i_sel,la_clk_sel} = la_data_in[7:0];
-        la_in = la_data_in[63:32];
-
         // outputs [31:16] and [127:64]
         la_data_out[15:0] = 0;
         la_data_out[23:16] = {5'b0,done,cfg_busy,rst_busy};
@@ -370,18 +368,12 @@ module s3ga_proj #(
 
     ///////////////////////////////////////////////////////////////////////////
     // IOs
-    
+
     `comb `V(32) io_in_32;
     integer i, j;
     always @* begin
         // S3GA IO inputs
         io_in_32 = io_in >> MPRJ_IO_MIN;
-        case (la_i_sel)
-        default: io_i = s3_in;
-        2'd1:    io_i = {io_in,s3_in[0+:32]};
-        2'd2:    io_i = {s3_in[0+:32],la_in};
-        2'd3:    io_i = {la_in,io_in_32};
-        endcase
 
         // MPRJ IO outputs
         io_out = io_o << (MPRJ_IO_MIN + (IO_I_W==16 ? 16 : 0)); // if only 16b I/O, don't overlap them
@@ -393,6 +385,16 @@ module s3ga_proj #(
         end
         // other
         user_irq = 0;
+    end
+ 
+    // resynchronize S3GA inputs to @clk; REVIEW CDC
+    always @(posedge clk) begin
+        case (la_i_sel)
+        default: io_i <= s3_in;
+        2'd1:    io_i <= {io_in,s3_in[0+:32]};
+        2'd2:    io_i <= {s3_in[0+:32],la_in};
+        2'd3:    io_i <= {la_in,io_in_32};
+        endcase
     end
 
     ///////////////////////////////////////////////////////////////////////////
@@ -439,7 +441,9 @@ module s3ga_1K_proj #(
     output `comb [2:0] user_irq
 );
     s3ga_proj #(.N(N), .M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .MACRO_N(MACRO_N))
-        s(.*);
+        s(.wb_clk_i, .wb_rst_i, .wbs_stb_i, .wbs_cyc_i, .wbs_we_i, .wbs_sel_i, .wbs_dat_i,
+          .wbs_adr_i, .wbs_ack_o, .la_data_in, .la_data_out, .la_oenb, .io_in, .io_out, .io_oeb,
+          .user_clock2, .user_irq);
 endmodule
 
 

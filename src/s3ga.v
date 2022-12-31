@@ -100,7 +100,7 @@ endmodule
 
 
 module macro #(
-    parameter N         = 64,           // N logical LUTs
+    parameter N         = 256,          // N logical LUTs
     parameter M         = 4,            // M contexts
     parameter B         = 4,            // subcluster branching factor
     parameter K         = 4,            // K-input LUTs
@@ -110,7 +110,7 @@ module macro #(
     parameter IO_O_W    = 0,            // parallel IO output width
     parameter UP_I_WS   = 08_08_16_32,  // up switch serial input  widths
     parameter UP_O_WS   = 04_04_08_16,  // up switch serial output widths
-    parameter UP_O_DELAY = 1,           // default up_o delay
+    parameter UP_O_DELAY = 0,           // default up_o delay
     parameter ID        = 0,            // cluster identifier ::= ID of its first LB
 
     parameter UP_I_W    = UP_I_WS%100,  // up switch serial input  width

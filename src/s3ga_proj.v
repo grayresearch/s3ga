@@ -37,8 +37,8 @@ Logic analyzer signals
 Name        Dir Bits    Description
 -----------------------------------
 la_ctl      in  7:0
-  .clk_sel  in  1:0     S3GA clk select: 0:wb_clk_i 1:la_clk 2:io_clk 3:user_clock2 !!
-  .i_sel    in  3:2     S3GA io_i[31: 0] input select: 0:s3_in0 1:s3_in0 2:la_in  3:io_in   !!
+  .clk_sel  in  1:0     S3GA clk select: 0:wb_clk_i 1:la_clk 2:io_clk 3:user_clock2
+  .i_sel    in  3:2     S3GA io_i[31: 0] input select: 0:s3_in0 1:s3_in0 2:la_in  3:io_in
                         S3GA io_i[63:32] input select: 0:s3_in1 1:io_in  2:s3_in0 3:la_in when IO_I_W>32
   .clk      in  4       S3GA clock when la.clk_sel==0; la_* inputs sampled on 0=>1 transition
   .rst      in  5       S3GA reset
@@ -136,7 +136,7 @@ LA configuration sequence, approx:
 
 
 module s3ga_proj #(
-    parameter N         = 256,           // N logical LUTs
+    parameter N         = 256,          // N logical LUTs
     parameter M         = 4,            // M contexts
     parameter CFG_W     = 5,            // config I/O width: {last,data[3:0]}
     parameter IO_I_W    = 64,           // parallel IO input  width
@@ -174,7 +174,7 @@ module s3ga_proj #(
     // signals and state
 
     // S3GA inputs
-    `comb clk;                          // clock input mux
+    wire clk = wb_clk_i;                // clock input mux -- CLKFIX!!
     `comb use_wb_clk;                   // la_ctl.clk_sel == 0: use wb_clk_i
     `comb use_la_clk;                   // la_ctl.clk_sel == 1: use la_clk
     reg `V(IO_I_W) io_i;                // S3GA IO inputs       @clk
@@ -227,7 +227,7 @@ module s3ga_proj #(
     localparam MPRJ_IO_MIN  = 8;        // only use IOs in [MPRJ_IO_MIN,MPRJ_IO_MAX);
     localparam MPRJ_IO_MAX  = 36;       // i.e. avoid IOs[37,36,7:0]
     localparam MPRJ_IO_W    = MPRJ_IO_MAX - MPRJ_IO_MIN;
-    wire io_clk = io_in[MPRJ_IO_MAX-1]; // MPRJ S3GA clock input
+    wire io_clk = io_in[MPRJ_IO_MIN];   // MPRJ S3GA clock input
 
     // other state
     reg `V(MPRJ_IO_W) oem = 0;          // MPRJ io_oeb mask ([i] => oeb[MPRJ_IO_MIN+i] enabled)
@@ -241,12 +241,16 @@ module s3ga_proj #(
     always @* begin
         use_wb_clk = clk_sel == 2'd0;
         use_la_clk = clk_sel == 2'd1;
+
+        // REVIEW: temporary expediency due to MPW-8 hold violations -- CLKFIX!!
+        /*
         case (la_clk_sel)
         default: clk = wb_clk_i;
         2'd1:    clk = la_clk;
         2'd2:    clk = io_clk;
         2'd3:    clk = user_clock2;
         endcase
+        */
 
         // S3GA reset *request*
         rst_req = wb_rst_i || (use_wb_clk && wb_rst) || (use_la_clk && la_rst);

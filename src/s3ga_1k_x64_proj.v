@@ -134,14 +134,13 @@ LA configuration sequence, approx:
     }
 */
 
-
 module s3ga_proj #(
-    parameter N         = 256,          // N logical LUTs
+    parameter N         = 1024,         // N logical LUTs
     parameter M         = 4,            // M contexts
     parameter CFG_W     = 5,            // config I/O width: {last,data[3:0]}
     parameter IO_I_W    = 32,           // parallel IO input  width
     parameter IO_O_W    = 64,           // parallel IO output width
-    parameter MACRO_N   = 0             // reuse a macro for cluster<N=MACRO_N>
+    parameter MACRO_N   = 64            // reuse a macro for cluster<N=MACRO_N>
 ) (
 `ifdef USE_POWER_PINS
     inout  vccd1,   // User area 1 1.8V supply

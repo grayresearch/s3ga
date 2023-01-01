@@ -139,7 +139,7 @@ module s3ga_proj #(
     parameter N         = 256,          // N logical LUTs
     parameter M         = 4,            // M contexts
     parameter CFG_W     = 5,            // config I/O width: {last,data[3:0]}
-    parameter IO_I_W    = 64,           // parallel IO input  width
+    parameter IO_I_W    = 32,           // parallel IO input  width
     parameter IO_O_W    = 64,           // parallel IO output width
     parameter MACRO_N   = 0             // reuse a macro for cluster<N=MACRO_N>
 ) (
@@ -238,9 +238,12 @@ module s3ga_proj #(
     // State here can be managed by logic analyzer or Wishbone interfaces,
     // so take care to sample requests per current la_clk_sel.
 
+    reg wb_rst_i_q;
+    always @(posedge wb_clk_i) wb_rst_i_q <= wb_rst_i;
+
     always @* begin
-        use_wb_clk = clk_sel == 2'd0;
-        use_la_clk = clk_sel == 2'd1;
+        use_wb_clk = la_clk_sel == 2'd0;
+        use_la_clk = la_clk_sel == 2'd1;
 
         // REVIEW: temporary expediency due to MPW-8 hold violations -- CLKFIX!!
         /*
@@ -253,7 +256,7 @@ module s3ga_proj #(
         */
 
         // S3GA reset *request*
-        rst_req = wb_rst_i || (use_wb_clk && wb_rst) || (use_la_clk && la_rst);
+        rst_req = wb_rst_i_q || (use_wb_clk && wb_rst) || (use_la_clk && la_rst);
 
         // S3GA state machines for reset, and to transfer one config data frame
         // as M segments in M contiguous beats, starting after a tock
@@ -327,14 +330,14 @@ module s3ga_proj #(
         // Writes to CSRs { s3_ctl, s3_cfg, s3_oem } impact the interface's
         // reset and config FSMs, and interact with logic analyzer outputs.
         // These are handled above in the FSMs block of the module.
-        wb_req   = !wb_rst_i && wbs_cyc_i && wbs_stb_i && !wbs_ack_o/* first cycle of transaction*/;
+        wb_req   = !wb_rst_i_q && wbs_cyc_i && wbs_stb_i && !wbs_ack_o/* first cycle of transaction*/;
         wb_write = wb_req && wbs_we_i && &wbs_sel_i;
         wb_rst   = wb_write && wbs_adr_i[5:0] == s3_ctl && wbs_dat_i[0];
         wb_cfg   = wb_write && wbs_adr_i[5:0] == s3_cfg;
         wb_oem   = wb_write && wbs_adr_i[5:0] == s3_oem;
     end
     always @(posedge wb_clk_i) begin
-        if (wb_rst_i) begin
+        if (wb_rst_i_q) begin
             wbs_ack_o <= 0;
             wbs_dat_o <= 0;
             s3_in <= 0;
@@ -383,9 +386,9 @@ module s3ga_proj #(
         io_out = io_o << (MPRJ_IO_MIN + (IO_I_W==16 ? 16 : 0)); // if only 16b I/O, don't overlap them
         io_oeb = {`MPRJ_IO_PADS{1'b1}}; // default to input
         for (i = MPRJ_IO_MIN; i < MPRJ_IO_MAX; i=i+1) begin
-            // given enough S3GA IOs, the io_o msbs are per-nybble dynamic output enables
+            // given enough S3GA IOs, the io_o msbs are per-nybble dynamic output enables -- disabled
             j = MPRJ_IO_W + (i-MPRJ_IO_MIN)/4;
-            io_oeb[i] = rst_busy || ~oem[i-MPRJ_IO_MIN] || (j<IO_O_W ? ~io_o[j] : 0);
+            io_oeb[i] = rst_busy || ~oem[i-MPRJ_IO_MIN]; // disabled: || (j<IO_O_W ? ~io_o[j] : 0);
         end
         // other
         user_irq = 0;
@@ -405,7 +408,11 @@ module s3ga_proj #(
     // S3GA instance
 
     s3ga #(.N(N), .M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .MACRO_N(MACRO_N))
-        s(.clk, .rst(rst_busy), .done, .tock, .cfg_i, .io_i, .io_o);
+        s(
+`ifdef USE_POWER_PINS
+          .vccd1, .vssd1,
+`endif
+          .clk, .rst(rst_busy), .done, .tock, .cfg_i, .io_i, .io_o);
 endmodule
 
 
@@ -413,7 +420,7 @@ module s3ga_1K_proj #(
     parameter N         = 1024,         // N logical LUTs
     parameter M         = 4,            // M contexts
     parameter CFG_W     = 5,            // config I/O width: {last,data[3:0]}
-    parameter IO_I_W    = 64,           // parallel IO input  width
+    parameter IO_I_W    = 32,           // parallel IO input  width
     parameter IO_O_W    = 64,           // parallel IO output width
     parameter MACRO_N   = 0             // reuse a macro for cluster<N=MACRO_N>
 ) (
@@ -445,7 +452,11 @@ module s3ga_1K_proj #(
     output `comb [2:0] user_irq
 );
     s3ga_proj #(.N(N), .M(M), .CFG_W(CFG_W), .IO_I_W(IO_I_W), .IO_O_W(IO_O_W), .MACRO_N(MACRO_N))
-        s(.wb_clk_i, .wb_rst_i, .wbs_stb_i, .wbs_cyc_i, .wbs_we_i, .wbs_sel_i, .wbs_dat_i,
+        s(
+`ifdef USE_POWER_PINS
+          .vccd1, .vssd1,
+`endif
+          .wb_clk_i, .wb_rst_i, .wbs_stb_i, .wbs_cyc_i, .wbs_we_i, .wbs_sel_i, .wbs_dat_i,
           .wbs_adr_i, .wbs_ack_o, .la_data_in, .la_data_out, .la_oenb, .io_in, .io_out, .io_oeb,
           .user_clock2, .user_irq);
 endmodule
